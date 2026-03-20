@@ -51,6 +51,19 @@ Describe 'doctor.ps1' {
         report   = ($output | ConvertFrom-Json)
       }
     }
+
+    function script:Normalize-TestPath {
+      param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+      )
+
+      if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+      }
+
+      return [System.IO.Path]::GetFullPath((Join-Path $script:repoRoot $Path))
+    }
   }
 
   BeforeEach {
@@ -86,6 +99,8 @@ Describe 'doctor.ps1' {
     $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
     $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
     $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
+    $expectedConfigPath = Normalize-TestPath -Path $configPath
+    $expectedGatewayConfigPath = Normalize-TestPath -Path $gatewayConfigPath
     $script:testPaths += @($stateDir, $gatewayDir, $configPath)
 
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -95,12 +110,12 @@ Describe 'doctor.ps1' {
 
     $result.exitCode | Should -Be 1
     $result.report.config.configSource | Should -Be 'explicit'
-    $result.report.config.sourcePath | Should -Be $configPath
+    $result.report.config.sourcePath | Should -Be $expectedConfigPath
     $result.report.identity.configuredMode | Should -Be 'credential'
     $result.report.identity.installLayout | Should -Be 'generated'
     $result.report.PSObject.Properties.Name | Should -Contain 'warnings'
     @($result.report.warnings).Count | Should -Be 0
-    @($result.report.issues) | Should -Contain "Gateway config file does not exist: $gatewayConfigPath"
+    @($result.report.issues) | Should -Contain "Gateway config file does not exist: $expectedGatewayConfigPath"
   }
 
   It 'reports invalid OpenClaw config JSON' {
@@ -108,6 +123,7 @@ Describe 'doctor.ps1' {
     $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
     $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
     $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
+    $expectedGatewayConfigPath = Normalize-TestPath -Path $gatewayConfigPath
     $script:testPaths += @($stateDir, $gatewayDir, $gatewayConfigPath, $configPath)
 
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -117,7 +133,7 @@ Describe 'doctor.ps1' {
     $result = Invoke-DoctorJson -ConfigPath $configPath
 
     $result.exitCode | Should -Be 1
-    (@($result.report.issues) | Where-Object { $_ -like "Gateway config file is not valid JSON: $gatewayConfigPath*" }).Count | Should -Be 1
+    (@($result.report.issues) | Where-Object { $_ -like "Gateway config file is not valid JSON: $expectedGatewayConfigPath*" }).Count | Should -Be 1
   }
 
   It 'accepts a valid OpenClaw config file' {
