@@ -1,6 +1,7 @@
 Describe 'doctor.ps1' {
   BeforeAll {
     $script:repoRoot = Split-Path -Parent $PSScriptRoot
+    Import-Module (Join-Path $script:repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
     $script:doctorScript = Join-Path $script:repoRoot 'doctor.ps1'
 
     function script:New-DoctorTestConfig {
@@ -76,6 +77,10 @@ Describe 'doctor.ps1' {
     $result.exitCode | Should -Be 1
     $result.report.config.configSource | Should -Be 'explicit'
     $result.report.config.sourcePath | Should -Be $configPath
+    $result.report.identity.configuredMode | Should -Be 'credential'
+    $result.report.identity.installLayout | Should -Be 'generated'
+    $result.report.PSObject.Properties.Name | Should -Contain 'warnings'
+    @($result.report.warnings).Count | Should -Be 0
     @($result.report.issues) | Should -Contain "Gateway config file does not exist: $gatewayConfigPath"
   }
 
@@ -112,5 +117,58 @@ Describe 'doctor.ps1' {
     $result.exitCode | Should -Be 1
     (@($result.report.issues) | Where-Object { $_ -like 'Gateway config file*' }).Count | Should -Be 0
     @($result.report.issues) | Should -Contain "Service '$($result.report.serviceName)' is not installed."
+  }
+
+  It 'returns success when only warnings are present' {
+    $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
+    $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
+    $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
+    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
+    $script:testPaths += @($stateDir, $gatewayDir, $gatewayConfigPath, $configPath)
+
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $gatewayDir -Force | Out-Null
+    Set-Content -LiteralPath $gatewayConfigPath -Value (@{ name = 'test' } | ConvertTo-Json -Depth 10) -Encoding UTF8
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'CONTOSO\svc-openclaw'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-PortListeners { @() }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode   = 'currentUser'
+        deprecatedAlias  = $true
+        expectedStartName = 'CONTOSO\svc-openclaw'
+        actualStartName  = 'CONTOSO\svc-openclaw'
+        matches          = $true
+        installLayout    = 'generated'
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+    $output = & $script:doctorScript -ConfigPath $configPath -Json
+    $LASTEXITCODE | Should -Be 0
+    $report = $output | ConvertFrom-Json
+
+    $report.PSObject.Properties.Name | Should -Contain 'warnings'
+    @($report.warnings).Count | Should -Be 1
+    @($report.issues).Count | Should -Be 0
   }
 }

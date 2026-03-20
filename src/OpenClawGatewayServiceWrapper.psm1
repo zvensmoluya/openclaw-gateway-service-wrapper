@@ -111,7 +111,7 @@ function Get-DefaultServiceConfig {
     stateDir           = '%USERPROFILE%\.openclaw'
     configPath         = '%USERPROFILE%\.openclaw\openclaw.json'
     tempDir            = '%LOCALAPPDATA%\Temp'
-    serviceAccountMode = 'currentUser'
+    serviceAccountMode = 'credential'
     openclawCommand    = ''
     allowForceBind     = $false
     winswVersion       = '2.12.0'
@@ -189,6 +189,195 @@ function Get-ProfileRootForUserName {
 
   $userLeaf = Get-UserNameLeaf -UserName $UserName
   return Join-Path 'C:\Users' $userLeaf
+}
+
+function Get-CurrentWindowsIdentityName {
+  return [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+}
+
+function Convert-ToComparableServiceAccountName {
+  param(
+    [AllowNull()]
+    [string]$AccountName
+  )
+
+  if ([string]::IsNullOrWhiteSpace($AccountName)) {
+    return $null
+  }
+
+  $trimmed = $AccountName.Trim()
+  switch -Regex ($trimmed) {
+    '^(?i:localsystem|nt authority\\system)$' {
+      return 'NT AUTHORITY\SYSTEM'
+    }
+    '^(?i:localservice|nt authority\\local ?service)$' {
+      return 'NT AUTHORITY\LOCAL SERVICE'
+    }
+    '^(?i:networkservice|nt authority\\network ?service)$' {
+      return 'NT AUTHORITY\NETWORK SERVICE'
+    }
+    default {
+      if ($trimmed.StartsWith('.\')) {
+        return "$env:COMPUTERNAME$($trimmed.Substring(1))"
+      }
+
+      return $trimmed
+    }
+  }
+}
+
+function Resolve-ServiceAccountSid {
+  param(
+    [AllowNull()]
+    [string]$AccountName
+  )
+
+  $comparableAccountName = Convert-ToComparableServiceAccountName -AccountName $AccountName
+  if ([string]::IsNullOrWhiteSpace($comparableAccountName)) {
+    return $null
+  }
+
+  try {
+    return (New-Object System.Security.Principal.NTAccount($comparableAccountName)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+  } catch {
+    return $null
+  }
+}
+
+function Test-IsBuiltInServiceAccount {
+  param(
+    [AllowNull()]
+    [string]$AccountName
+  )
+
+  $comparableAccountName = Convert-ToComparableServiceAccountName -AccountName $AccountName
+  return $comparableAccountName -in @(
+    'NT AUTHORITY\SYSTEM',
+    'NT AUTHORITY\LOCAL SERVICE',
+    'NT AUTHORITY\NETWORK SERVICE'
+  )
+}
+
+function Test-ServiceAccountMatch {
+  param(
+    [AllowNull()]
+    [string]$ExpectedAccountName,
+    [AllowNull()]
+    [string]$ActualAccountName
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ExpectedAccountName) -or [string]::IsNullOrWhiteSpace($ActualAccountName)) {
+    return $false
+  }
+
+  $expectedSid = Resolve-ServiceAccountSid -AccountName $ExpectedAccountName
+  $actualSid = Resolve-ServiceAccountSid -AccountName $ActualAccountName
+  if (($null -ne $expectedSid) -and ($null -ne $actualSid)) {
+    return $expectedSid -eq $actualSid
+  }
+
+  $expectedComparable = Convert-ToComparableServiceAccountName -AccountName $ExpectedAccountName
+  $actualComparable = Convert-ToComparableServiceAccountName -AccountName $ActualAccountName
+  return [string]::Equals($expectedComparable, $actualComparable, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-ExpectedServiceStartName {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$UserName
+  )
+
+  if (Test-IsBuiltInServiceAccount -AccountName $UserName) {
+    switch (Convert-ToComparableServiceAccountName -AccountName $UserName) {
+      'NT AUTHORITY\SYSTEM' {
+        return 'LocalSystem'
+      }
+      'NT AUTHORITY\LOCAL SERVICE' {
+        return 'LocalService'
+      }
+      'NT AUTHORITY\NETWORK SERVICE' {
+        return 'NetworkService'
+      }
+    }
+  }
+
+  if ($UserName.Contains('\')) {
+    return $UserName
+  }
+
+  if ($UserName.Contains('@')) {
+    return $UserName
+  }
+
+  return ".\$UserName"
+}
+
+function Get-ServiceAccountIdentityContext {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$AccountName
+  )
+
+  $comparableAccountName = Convert-ToComparableServiceAccountName -AccountName $AccountName
+  switch ($comparableAccountName) {
+    'NT AUTHORITY\SYSTEM' {
+      $profileRoot = Join-Path $env:WINDIR 'System32\Config\SystemProfile'
+      $localAppData = Join-Path $profileRoot 'AppData\Local'
+      $tempDir = Join-Path $localAppData 'Temp'
+
+      return @{
+        mode         = 'serviceAccount'
+        userName     = 'LocalSystem'
+        profileRoot  = $profileRoot
+        home         = $profileRoot
+        localAppData = $localAppData
+        tempDir      = $tempDir
+      }
+    }
+    'NT AUTHORITY\LOCAL SERVICE' {
+      $profileRoot = Join-Path $env:WINDIR 'ServiceProfiles\LocalService'
+      $localAppData = Join-Path $profileRoot 'AppData\Local'
+      $tempDir = Join-Path $localAppData 'Temp'
+
+      return @{
+        mode         = 'serviceAccount'
+        userName     = 'LocalService'
+        profileRoot  = $profileRoot
+        home         = $profileRoot
+        localAppData = $localAppData
+        tempDir      = $tempDir
+      }
+    }
+    'NT AUTHORITY\NETWORK SERVICE' {
+      $profileRoot = Join-Path $env:WINDIR 'ServiceProfiles\NetworkService'
+      $localAppData = Join-Path $profileRoot 'AppData\Local'
+      $tempDir = Join-Path $localAppData 'Temp'
+
+      return @{
+        mode         = 'serviceAccount'
+        userName     = 'NetworkService'
+        profileRoot  = $profileRoot
+        home         = $profileRoot
+        localAppData = $localAppData
+        tempDir      = $tempDir
+      }
+    }
+    default {
+      $profileRoot = Get-ProfileRootForUserName -UserName $comparableAccountName
+      $localAppData = Join-Path $profileRoot 'AppData\Local'
+      $tempDir = Join-Path $localAppData 'Temp'
+
+      return @{
+        mode         = 'serviceAccount'
+        userName     = $comparableAccountName
+        profileRoot  = $profileRoot
+        home         = $profileRoot
+        localAppData = $localAppData
+        tempDir      = $tempDir
+      }
+    }
+  }
 }
 
 function Get-ServiceIdentityContext {
@@ -351,6 +540,84 @@ function Get-ServiceConfig {
   $merged.healthUrl = "http://127.0.0.1:$($merged.port)/health"
 
   return $merged
+}
+
+function Resolve-ServiceAccountPlan {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [pscredential]$Credential,
+    [string]$CurrentWindowsIdentityName = (Get-CurrentWindowsIdentityName),
+    [switch]$PromptForCredential
+  )
+
+  $configuredMode = $Config.serviceAccountMode.ToString().Trim()
+  $deprecatedAlias = $configuredMode -eq 'currentUser'
+  $resolvedCredential = $Credential
+  $expectedStartName = $null
+  $requiresCredential = $false
+  $promptUserName = $null
+
+  switch ($configuredMode) {
+    'currentUser' {
+      $expectedStartName = $CurrentWindowsIdentityName
+      $promptUserName = $CurrentWindowsIdentityName
+
+      if ($null -ne $resolvedCredential) {
+        if (-not (Test-ServiceAccountMatch -ExpectedAccountName $CurrentWindowsIdentityName -ActualAccountName $resolvedCredential.UserName)) {
+          throw "serviceAccountMode 'currentUser' is deprecated and only supports the current Windows identity '$CurrentWindowsIdentityName'. Pass a matching credential or set serviceAccountMode to 'credential'."
+        }
+      } elseif ($PromptForCredential) {
+        $resolvedCredential = Get-Credential -UserName $CurrentWindowsIdentityName -Message "serviceAccountMode 'currentUser' is deprecated. Enter the password for the current Windows user that should run the OpenClaw service."
+        if ($null -eq $resolvedCredential) {
+          throw 'A credential is required to install the service for the current Windows user.'
+        }
+
+        if (-not (Test-ServiceAccountMatch -ExpectedAccountName $CurrentWindowsIdentityName -ActualAccountName $resolvedCredential.UserName)) {
+          throw "serviceAccountMode 'currentUser' is deprecated and only supports the current Windows identity '$CurrentWindowsIdentityName'. The credential prompt username must stay on that account; use serviceAccountMode 'credential' to install under a different user."
+        }
+      } else {
+        $requiresCredential = $true
+      }
+    }
+    'credential' {
+      if ($null -eq $resolvedCredential) {
+        if ($PromptForCredential) {
+          $resolvedCredential = Get-Credential -Message 'Enter the Windows user account that should run the OpenClaw service.'
+          if ($null -eq $resolvedCredential) {
+            throw 'A PSCredential is required when serviceAccountMode is credential.'
+          }
+        } else {
+          $requiresCredential = $true
+        }
+      }
+
+      if ($null -ne $resolvedCredential) {
+        $expectedStartName = Get-ExpectedServiceStartName -UserName $resolvedCredential.UserName
+      }
+    }
+    default {
+      throw "serviceAccountMode '$configuredMode' is not supported. Use credential or currentUser."
+    }
+  }
+
+  $identityContext = if (-not [string]::IsNullOrWhiteSpace($expectedStartName)) {
+    Get-ServiceAccountIdentityContext -AccountName $expectedStartName
+  } else {
+    $null
+  }
+
+  return @{
+    configuredMode     = $configuredMode
+    effectiveMode      = 'credential'
+    deprecatedAlias    = $deprecatedAlias
+    expectedStartName  = $expectedStartName
+    identityContext    = $identityContext
+    credential         = $resolvedCredential
+    requiresCredential = $requiresCredential
+    promptUserName     = $promptUserName
+  }
 }
 
 function Read-RememberedServiceConfigSelection {
@@ -549,6 +816,211 @@ function Get-ServiceArtifactLayout {
   }
 }
 
+function Get-ServiceExecutablePathFromPathName {
+  param(
+    [AllowNull()]
+    [string]$PathName
+  )
+
+  if ([string]::IsNullOrWhiteSpace($PathName)) {
+    return $null
+  }
+
+  if ($PathName -match '^\s*"([^"]+)"') {
+    return [System.IO.Path]::GetFullPath($matches[1])
+  }
+
+  if ($PathName -match '^\s*(\S+)') {
+    return [System.IO.Path]::GetFullPath($matches[1])
+  }
+
+  return $null
+}
+
+function Get-ServiceInstallLayoutFromExecutablePath {
+  param(
+    [AllowNull()]
+    [string]$ExecutablePath
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    return 'generated'
+  }
+
+  $resolvedExecutablePath = [System.IO.Path]::GetFullPath($ExecutablePath)
+  $generatedRoot = [System.IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'tools\winsw'))
+  if ($resolvedExecutablePath.StartsWith($generatedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return 'generated'
+  }
+
+  $executableDirectory = Split-Path -Parent $resolvedExecutablePath
+  if ([string]::Equals($executableDirectory, $script:RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return 'legacyRoot'
+  }
+
+  return 'generated'
+}
+
+function Get-WinSWServiceAccountInfo {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$XmlPath
+  )
+
+  if (-not (Test-Path -LiteralPath $XmlPath)) {
+    return $null
+  }
+
+  [xml]$document = Get-Content -LiteralPath $XmlPath -Raw
+  $serviceAccountNode = $document.SelectSingleNode('/service/serviceaccount')
+  if ($null -eq $serviceAccountNode) {
+    return @{
+      xmlPath            = $XmlPath
+      hasServiceAccount  = $false
+      expectedStartName  = $null
+    }
+  }
+
+  $domain = $serviceAccountNode.domain
+  $user = $serviceAccountNode.user
+  if ([string]::IsNullOrWhiteSpace($user)) {
+    return @{
+      xmlPath            = $XmlPath
+      hasServiceAccount  = $false
+      expectedStartName  = $null
+    }
+  }
+
+  $expectedStartName = if ([string]::IsNullOrWhiteSpace($domain) -or $domain -eq '.') {
+    if ($user.Contains('@')) {
+      $user
+    } else {
+      ".\$user"
+    }
+  } else {
+    "$domain\$user"
+  }
+
+  return @{
+    xmlPath           = $XmlPath
+    hasServiceAccount = $true
+    expectedStartName = $expectedStartName
+  }
+}
+
+function Get-ServiceInstallLayout {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [hashtable]$ServiceDetails
+  )
+
+  if (($null -ne $ServiceDetails) -and $ServiceDetails.installed -and -not [string]::IsNullOrWhiteSpace($ServiceDetails.pathName)) {
+    $actualExecutablePath = Get-ServiceExecutablePathFromPathName -PathName $ServiceDetails.pathName
+    return (Get-ServiceInstallLayoutFromExecutablePath -ExecutablePath $actualExecutablePath)
+  }
+
+  $layout = Get-ServiceArtifactLayout -Config $Config
+  if ((Test-Path -LiteralPath $layout.legacyExecutablePath) -and -not (Test-Path -LiteralPath $layout.generatedExecutablePath)) {
+    return 'legacyRoot'
+  }
+
+  return 'generated'
+}
+
+function Resolve-InspectionIdentityContext {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [hashtable]$ServiceDetails,
+    [string]$CurrentWindowsIdentityName = (Get-CurrentWindowsIdentityName)
+  )
+
+  if (($null -ne $ServiceDetails) -and $ServiceDetails.installed -and -not [string]::IsNullOrWhiteSpace($ServiceDetails.startName)) {
+    return (Get-ServiceAccountIdentityContext -AccountName $ServiceDetails.startName)
+  }
+
+  $plan = Resolve-ServiceAccountPlan -Config $Config -CurrentWindowsIdentityName $CurrentWindowsIdentityName
+  if ($null -ne $plan.identityContext) {
+    return $plan.identityContext
+  }
+
+  return (Get-ServiceIdentityContext -Mode 'currentUser')
+}
+
+function Get-ServiceIdentityReport {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [hashtable]$ServiceDetails,
+    [string]$CurrentWindowsIdentityName = (Get-CurrentWindowsIdentityName)
+  )
+
+  $plan = Resolve-ServiceAccountPlan -Config $Config -CurrentWindowsIdentityName $CurrentWindowsIdentityName
+  $installLayout = Get-ServiceInstallLayout -Config $Config -ServiceDetails $ServiceDetails
+  $layout = Get-ServiceArtifactLayout -Config $Config
+  $xmlPath = if ($installLayout -eq 'legacyRoot') {
+    $layout.legacyXmlPath
+  } else {
+    $layout.generatedXmlPath
+  }
+
+  $xmlAccount = Get-WinSWServiceAccountInfo -XmlPath $xmlPath
+  $expectedStartName = if (($null -ne $xmlAccount) -and -not [string]::IsNullOrWhiteSpace($xmlAccount.expectedStartName)) {
+    $xmlAccount.expectedStartName
+  } elseif (($installLayout -eq 'legacyRoot') -and ($plan.configuredMode -eq 'currentUser')) {
+    $null
+  } else {
+    $plan.expectedStartName
+  }
+
+  $actualStartName = if (($null -ne $ServiceDetails) -and $ServiceDetails.installed) {
+    $ServiceDetails.startName
+  } else {
+    $null
+  }
+
+  $matches = if (-not [string]::IsNullOrWhiteSpace($expectedStartName) -and -not [string]::IsNullOrWhiteSpace($actualStartName)) {
+    Test-ServiceAccountMatch -ExpectedAccountName $expectedStartName -ActualAccountName $actualStartName
+  } else {
+    $false
+  }
+
+  return @{
+    configuredMode   = $plan.configuredMode
+    deprecatedAlias  = $plan.deprecatedAlias
+    expectedStartName = $expectedStartName
+    actualStartName  = $actualStartName
+    matches          = $matches
+    installLayout    = $installLayout
+  }
+}
+
+function Get-ServiceInstallValidationIssues {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$ServiceDetails,
+    [string]$CurrentWindowsIdentityName = (Get-CurrentWindowsIdentityName)
+  )
+
+  $identity = Get-ServiceIdentityReport -Config $Config -ServiceDetails $ServiceDetails -CurrentWindowsIdentityName $CurrentWindowsIdentityName
+  $issues = @()
+
+  if (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) {
+    $issues += "Service '$($Config.serviceName)' was installed as built-in account '$($identity.actualStartName)'. Reinstall with explicit credentials so the service runs under '$($identity.expectedStartName)'."
+  } elseif (-not [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and -not $identity.matches) {
+    $issues += "Service '$($Config.serviceName)' is running as '$($identity.actualStartName)', but the planned service account is '$($identity.expectedStartName)'. Reinstall with explicit credentials."
+  }
+
+  return [string[]]$issues
+}
+
 function Resolve-ManagedExecutablePath {
   param(
     [Parameter(Mandatory = $true)]
@@ -637,11 +1109,7 @@ function Render-WinSWServiceXml {
   }
 
   $serviceAccountBlock = ''
-  if ($ServiceAccountMode -eq 'credential') {
-    if ($null -eq $Credential) {
-      throw 'Credential mode requires a PSCredential.'
-    }
-
+  if ($null -ne $Credential) {
     $credentialParts = Split-ServiceCredentialUser -UserName $Credential.UserName
     $serviceAccountBlock = @(
       '  <serviceaccount>'
@@ -651,6 +1119,8 @@ function Render-WinSWServiceXml {
       '    <allowservicelogon>true</allowservicelogon>'
       '  </serviceaccount>'
     ) -join [Environment]::NewLine
+  } elseif ($ServiceAccountMode -eq 'credential') {
+    throw 'Credential mode requires a PSCredential.'
   }
 
   $replacements = @{
@@ -1080,16 +1550,25 @@ function Remove-GeneratedArtifacts {
 
 Export-ModuleMember -Function `
   Clear-RememberedServiceConfigSelection, `
+  Get-CurrentWindowsIdentityName, `
   Ensure-Directory, `
   Ensure-WinSWBinary, `
   Get-EffectiveServiceAccountMode, `
   Get-GatewayConfigValidationIssues, `
   Get-PortListeners, `
   Get-RememberedConfigMetadataPath, `
+  Get-ExpectedServiceStartName, `
+  Get-ServiceAccountIdentityContext, `
   Get-ServiceArtifactLayout, `
   Get-ServiceConfig, `
   Get-ServiceDetails, `
+  Get-ServiceExecutablePathFromPathName, `
   Get-ServiceIdentityContext, `
+  Get-ServiceIdentityReport, `
+  Get-ServiceInstallValidationIssues, `
+  Get-ServiceInstallLayout, `
+  Get-ServiceInstallLayoutFromExecutablePath, `
+  Get-WinSWServiceAccountInfo, `
   Get-WrapperRoot, `
   Invoke-HealthCheck, `
   Invoke-WinSWCommand, `
@@ -1099,9 +1578,13 @@ Export-ModuleMember -Function `
   Render-WinSWServiceXml, `
   Resolve-ManagedExecutablePath, `
   Resolve-OpenClawCommandPath, `
+  Resolve-ServiceAccountPlan, `
   Resolve-ServiceConfig, `
   Resolve-ServiceConfigSelection, `
+  Resolve-InspectionIdentityContext, `
   Stop-RecordedServiceProcessTree, `
+  Test-IsBuiltInServiceAccount, `
+  Test-ServiceAccountMatch, `
   Update-RunState, `
   Wait-ForServiceStatus, `
   Write-RememberedServiceConfigSelection, `

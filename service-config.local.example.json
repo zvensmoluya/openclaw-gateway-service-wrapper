@@ -1,4 +1,5 @@
 {
+  "serviceAccountMode": "currentUser",
   "openclawCommand": "%LOCALAPPDATA%\\Programs\\node-v22.0.0-win-x64\\openclaw.cmd",
   "stateDir": "%USERPROFILE%\\.openclaw",
   "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json",

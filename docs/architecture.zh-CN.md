@@ -42,11 +42,12 @@
 
 ## 服务身份与路径解析
 
-- 默认模式是 `currentUser`
-- 在 `currentUser` 模式下，`install.ps1` 会提示输入当前用户凭据，好让 WinSW 以该账号安装服务
-- 安装时显式提供凭据会把有效模式切换为 `credential`
-- 像 `stateDir`、`configPath`、`tempDir` 这样的身份相关路径，会在安装前按选定账号解析
-- 运行时，`run-gateway.ps1` 使用当前进程身份；安装成功后，这个身份应当与配置的服务账号一致
+- 默认模式是 `credential`
+- `credential` 是主模型。安装时会按选定的 Windows 服务账户解析身份相关路径，并在 WinSW XML 里写出 `<serviceaccount>`
+- `currentUser` 仍保留为已弃用兼容别名，只表示“提示输入当前 Windows 用户的密码，并把服务安装到这个账户下”
+- 如果 WinSW XML 里没有 `<serviceaccount>`，Windows 会把服务安装成 `LocalSystem`。Wrapper 现在会显式检测并报告这种不匹配
+- `stateDir`、`configPath`、`tempDir` 这类身份相关路径，在安装时按计划服务账户解析，在状态/诊断阶段按服务实际 `StartName` 对应的账户解析
+- 运行时，`run-gateway.ps1` 使用当前服务进程身份；wrapper 不会尝试模拟“当前交互用户会话”
 
 ## 故障恢复
 

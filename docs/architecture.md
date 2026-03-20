@@ -41,11 +41,12 @@ This repository wraps the OpenClaw gateway in a Windows service package. The ups
 
 ## Service Identity and Path Resolution
 
-- Default mode is `currentUser`.
-- In `currentUser` mode, `install.ps1` prompts for the current user's credential so WinSW can install the service under that account.
-- Install-time credentials switch the effective mode to `credential`.
-- Identity-aware paths such as `stateDir`, `configPath`, and `tempDir` are resolved against the selected account before install.
-- At runtime, `run-gateway.ps1` uses the current process identity, which matches the configured service account after installation.
+- Default mode is `credential`.
+- `credential` is the primary Windows Service model. Installation resolves identity-aware paths against the selected service account and writes a WinSW `<serviceaccount>` block.
+- `currentUser` remains as a deprecated compatibility alias. It only means "prompt for the current Windows user's credential and install the service under that account."
+- If WinSW XML omits `<serviceaccount>`, Windows installs the service as `LocalSystem`. The wrapper now detects and reports that mismatch explicitly.
+- Identity-aware paths such as `stateDir`, `configPath`, and `tempDir` are resolved against the planned service account during install, and against the actual `StartName` account during status and diagnostic inspection.
+- At runtime, `run-gateway.ps1` uses the current service process identity. The wrapper does not try to emulate the current interactive user session.
 
 ## Failure Recovery
 

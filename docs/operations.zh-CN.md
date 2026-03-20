@@ -8,6 +8,8 @@
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
+由于默认的 `serviceAccountMode` 现在是 `credential`，安装时会提示输入真正要运行服务的 Windows 账户。
+
 使用显式 wrapper 配置安装：
 
 ```powershell
@@ -21,7 +23,7 @@ $credential = Get-Credential
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 ```
 
-如果 `serviceAccountMode` 保持默认的 `currentUser`，`install.ps1` 会自动提示输入当前用户密码。
+如果你刻意使用已弃用的 `currentUser` 别名，`install.ps1` 会提示输入当前 Windows 用户的密码，并把服务安装到同一个账户下。
 
 安装成功后，wrapper 会把实际使用的 wrapper 配置路径记到 `.runtime/active-config.json`。
 
@@ -55,6 +57,10 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1
 - `configSource`：`explicit`、`remembered` 或 `repoDefault`
 - `sourcePath`：当前真正生效的 wrapper 配置路径
 - `rememberedPath`：当前 remembered 的 wrapper 配置路径，如果没有则为 `null`
+- `identity.configuredMode`：配置里的服务身份模式
+- `identity.expectedStartName`：wrapper 期望的 Windows 服务账户
+- `identity.actualStartName`：服务当前实际使用的 Windows 账户
+- `identity.installLayout`：`generated` 或 `legacyRoot`
 
 `doctor.ps1` 还会检查 `configPath` 指向的 OpenClaw 配置文件是否存在，以及 JSON 语法是否有效。
 
@@ -71,3 +77,4 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1
 - 健康检查默认访问 `http://127.0.0.1:<port>/health`
 - 默认停机逻辑只会结束记录下来的服务进程树，不会扫端口误杀其他进程
 - 如果 remembered config 指向的文件已经失效，运维脚本会直接失败，直到你显式传入 `-ConfigPath` 或重新成功安装
+- 如果 `status.ps1` 或 `doctor.ps1` 报告 `LocalSystem` 或 `legacyRoot`，应当重新按显式凭据重装，而不是用 Git 的安全目录设置去掩盖问题

@@ -7,7 +7,7 @@
   "stateDir": "%USERPROFILE%\\.openclaw",
   "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json",
   "tempDir": "%LOCALAPPDATA%\\Temp",
-  "serviceAccountMode": "currentUser",
+  "serviceAccountMode": "credential",
   "openclawCommand": "",
   "allowForceBind": false,
   "winswVersion": "2.12.0",

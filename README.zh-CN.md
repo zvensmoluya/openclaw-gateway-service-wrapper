@@ -29,6 +29,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
+仓库默认现在使用 `serviceAccountMode: credential`，所以安装时会提示输入实际要运行服务的 Windows 账户凭据。这个工具是 Windows Service 包装器，不是“跟随当前登录用户环境”的后台代理。
+
 4. 检查状态和健康：
 
 ```powershell
@@ -53,15 +55,16 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 
 ## Wrapper 配置示例
 
-- `service-config.local.example.json`：本地用户安装示例
-- `service-config.credential.example.json`：服务账号安装示例
+- `service-config.local.example.json`：本地快速安装示例，使用已弃用但兼容的 `currentUser` 别名；底层仍然会安装成一个带凭据的 Windows Service
+- `service-config.credential.example.json`：推荐的服务账号安装示例
 - `service-config.custom-port.example.json`：自定义服务名和端口示例
 
 ## 服务账号
 
-- 默认模式是 `currentUser`
-- 在 `currentUser` 模式下，`install.ps1` 会提示输入当前用户密码，再把服务安装到该账号下运行
-- 如果要用其他账号安装服务，可以在安装时传入凭据：
+- 默认模式是 `credential`
+- `credential` 是推荐的 Windows Service 模式。它要求显式的 Windows 服务账户；如果你不在命令行上传 `-Credential`，安装脚本会交互式提示输入
+- `currentUser` 仍然可用，但只是一个已弃用的兼容别名。它的含义是“提示输入当前 Windows 用户的密码，并把服务安装到这个用户账户下”，不是“在当前交互用户会话里运行”
+- 如果要显式指定要运行服务的账号，可以在安装时传入凭据：
 
 ```powershell
 $credential = Get-Credential
@@ -103,4 +106,4 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 0.1.0
 - 这个仓库不包含 OpenClaw 上游源码
 - WinSW 二进制不会直接提交进仓库，而是在安装时下载并做 SHA256 校验
 - 停机逻辑默认使用“精确结束记录下来的服务进程树”，不再按端口扫描后强杀
-- `status.ps1` 和 `doctor.ps1` 会显示 `configSource`、`sourcePath`、`rememberedPath`，方便确认当前到底读的是哪份 wrapper 配置
+- `status.ps1` 和 `doctor.ps1` 会显示 `configSource`、`sourcePath`、`rememberedPath` 以及服务身份信息，方便确认当前到底读的是哪份 wrapper 配置、服务又是以哪个 Windows 账户运行

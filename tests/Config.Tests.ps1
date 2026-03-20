@@ -10,6 +10,7 @@ Describe 'Get-ServiceConfig' {
     $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
 
     Assert-Equal $config.serviceName 'OpenClawService'
+    Assert-Equal $config.serviceAccountMode 'credential'
     Assert-Equal $config.port 18789
     Assert-Equal $config.healthUrl 'http://127.0.0.1:18789/health'
     Assert-MatchPattern $config.stateDir '\\.openclaw$'

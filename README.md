@@ -29,6 +29,8 @@ Install with an explicit wrapper config:
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
+The repository default now uses `serviceAccountMode: credential`, so installation prompts for the Windows account that should own the service. This wrapper is a Windows Service package, not a "follow the currently logged-in user" agent.
+
 4. Check health:
 
 ```powershell
@@ -53,14 +55,15 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 
 ## Example Wrapper Configs
 
-- `service-config.local.example.json`: local-user install with an explicit CLI path
+- `service-config.local.example.json`: current-user compatibility alias for local installs; still installs a credential-backed Windows Service
 - `service-config.credential.example.json`: service-account install with machine-level paths
 - `service-config.custom-port.example.json`: alternate service name and port
 
 ## Service Account Support
 
-- Default mode is `currentUser`.
-- In `currentUser` mode, `install.ps1` prompts for the current user's password so WinSW can install the service under that account.
+- Default mode is `credential`.
+- `credential` is the recommended Windows Service mode. It installs the service under an explicit Windows account and prompts for credentials when they are not supplied on the command line.
+- `currentUser` is still accepted as a deprecated compatibility alias. It means "prompt for the current Windows user's credential and install the service under that account." It does not mean "run inside the current interactive user session."
 - To install under another account, pass a credential at install time:
 
 ```powershell
@@ -103,4 +106,4 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 0.1.0
 - The repository does not vendor the upstream OpenClaw source code.
 - Third-party WinSW binaries are downloaded during install and verified by SHA256.
 - The current implementation prefers precise process-tree shutdown over port-based kill logic.
-- `status.ps1` and `doctor.ps1` report `configSource`, `sourcePath`, and `rememberedPath` so operators can see which wrapper config is actually active.
+- `status.ps1` and `doctor.ps1` report `configSource`, `sourcePath`, `rememberedPath`, and service identity details so operators can see which wrapper config and Windows account are actually active.

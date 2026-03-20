@@ -43,6 +43,23 @@ jobs:
           Import-Module Pester -RequiredVersion 5.5.0 -Force
           Invoke-Pester -Path .\tests -CI
 
+      - name: Verify test discovery includes key suites
+        run: |
+          $required = @(
+            'Config.Tests.ps1',
+            'ConfigSelection.Tests.ps1',
+            'Doctor.Tests.ps1',
+            'Layout.Tests.ps1',
+            'ServiceIdentity.Tests.ps1',
+            'Status.Tests.ps1',
+            'Template.Tests.ps1'
+          )
+          $present = Get-ChildItem -Path .\tests -Filter *.Tests.ps1 -File | Select-Object -ExpandProperty Name
+          $missing = $required | Where-Object { $_ -notin $present }
+          if ($missing.Count -gt 0) {
+            throw "Expected test suites were not found in .\\tests: $($missing -join ', ')"
+          }
+
       - name: Build release package
         run: powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version ci
 

@@ -18,6 +18,13 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 - If it reports `Gateway config file is not valid JSON`, fix the JSON syntax before retrying.
 - This wrapper validates file existence and JSON syntax only. Upstream OpenClaw still owns the schema itself.
 
+## `status.ps1` or `doctor.ps1` Reports `LocalSystem` or `legacyRoot`
+
+- `LocalSystem`, `LocalService`, and `NetworkService` are built-in Windows service accounts. They are not interchangeable with your interactive user profile.
+- `legacyRoot` means the installed service still points at the old root-level `OpenClawService.exe` / `.xml` layout, which may lack an explicit `<serviceaccount>` block.
+- Reinstall the service with an explicit credential-backed config. Do not use `git safe.directory` or similar Git workarounds to mask the symptom.
+- If you used `serviceAccountMode: currentUser`, treat it as a compatibility alias only. The service still needs a real Windows account credential and still runs as a Windows Service.
+
 ## `doctor.ps1` Reports Missing `openclaw`
 
 - Ensure the OpenClaw CLI is installed on the machine.

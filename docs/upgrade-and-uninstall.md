@@ -20,6 +20,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 If you need to replace an unhealthy previous install, use `-Force`.
 
+If `status.ps1` or `doctor.ps1` reports that the service is still running as `LocalSystem` or still using the `legacyRoot` layout, rerun install with explicit credentials so WinSW rewrites the service account correctly.
+
 ## Uninstall
 
 ```powershell

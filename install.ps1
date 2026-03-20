@@ -11,22 +11,17 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
 
 try {
+  $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
   $bootstrapIdentity = Get-ServiceIdentityContext -Mode 'currentUser'
   $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath
   $bootstrapConfig = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $bootstrapIdentity
-  $installCredential = $Credential
-  $serviceAccountMode = Get-EffectiveServiceAccountMode -Config $bootstrapConfig -Credential $installCredential
-  if ($serviceAccountMode -eq 'currentUser') {
-    $currentUserName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $installCredential = Get-Credential -UserName $currentUserName -Message 'Enter the password for the user account that should run the OpenClaw service.'
-    if ($null -eq $installCredential) {
-      throw 'A credential is required to install the service for the current user.'
-    }
-
-    $serviceAccountMode = 'credential'
+  $serviceAccountPlan = Resolve-ServiceAccountPlan -Config $bootstrapConfig -Credential $Credential -CurrentWindowsIdentityName $currentWindowsIdentityName -PromptForCredential
+  $installCredential = $serviceAccountPlan.credential
+  if ($serviceAccountPlan.deprecatedAlias) {
+    Write-Warning "serviceAccountMode 'currentUser' is deprecated. The service will be installed for the explicit Windows account '$($serviceAccountPlan.expectedStartName)'."
   }
 
-  $identityContext = Get-ServiceIdentityContext -Mode $serviceAccountMode -Credential $installCredential
+  $identityContext = $serviceAccountPlan.identityContext
   $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $identityContext
   $config.configSource = $selection.configSource
   $config.rememberedPath = $selection.rememberedPath
@@ -76,7 +71,7 @@ try {
   }
 
   Ensure-WinSWBinary -Config $config -Force:$Force | Out-Null
-  Write-WinSWServiceXml -Config $config -ServiceAccountMode $serviceAccountMode -Credential $installCredential | Out-Null
+  Write-WinSWServiceXml -Config $config -ServiceAccountMode $serviceAccountPlan.effectiveMode -Credential $installCredential | Out-Null
 
   Invoke-WinSWCommand -Config $config -Command 'install'
   Invoke-WinSWCommand -Config $config -Command 'start'
@@ -85,12 +80,19 @@ try {
     throw "Service '$($config.serviceName)' did not reach the Running state within 30 seconds."
   }
 
+  $installedService = Get-ServiceDetails -ServiceName $config.serviceName
+  $identityValidationIssues = @(Get-ServiceInstallValidationIssues -Config $config -ServiceDetails $installedService -CurrentWindowsIdentityName $currentWindowsIdentityName)
+  if ($identityValidationIssues.Count -gt 0) {
+    throw ($identityValidationIssues -join ' ')
+  }
+
   Write-RememberedServiceConfigSelection -SourceConfigPath $config.sourceConfigPath -ServiceName $config.serviceName | Out-Null
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
 
   Write-Host ''
   Write-Host "Service name : $($config.serviceName)"
   Write-Host "Config       : $($config.sourceConfigPath) [$($config.configSource)]"
+  Write-Host "Run as       : $($installedService.startName)"
   Write-Host "Port         : $($config.port)"
   Write-Host "WinSW home   : $($layout.generatedDirectory)"
   Write-Host "Health URL   : $($config.healthUrl)"

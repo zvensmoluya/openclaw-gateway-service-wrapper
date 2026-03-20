@@ -28,4 +28,22 @@ Describe 'Render-WinSWServiceXml' {
     Assert-MatchPattern $xml '<user>example-user</user>'
     Assert-MatchPattern $xml '<allowservicelogon>true</allowservicelogon>'
   }
+
+  It 'renders a service account block for the currentUser compatibility path when a credential is provided' {
+    $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+    $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
+    $secure = ConvertTo-SecureString 'example-password' -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential('example-user', $secure)
+    $xml = Render-WinSWServiceXml -Config $config -ServiceAccountMode 'currentUser' -Credential $credential
+
+    Assert-MatchPattern $xml '<serviceaccount>'
+    Assert-MatchPattern $xml '<allowservicelogon>true</allowservicelogon>'
+  }
+
+  It 'requires a credential when credential mode is requested explicitly' {
+    $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+    $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
+
+    { Render-WinSWServiceXml -Config $config -ServiceAccountMode 'credential' } | Should -Throw '*Credential mode requires a PSCredential.*'
+  }
 }

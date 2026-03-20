@@ -35,6 +35,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 After that first successful install, later operational scripts can omit `-ConfigPath` and still follow the remembered config path.
 
+## Service Account Model
+
+- `credential`: the recommended and default mode. The service is installed under an explicit Windows account.
+- `currentUser`: a deprecated compatibility alias. It means "install under the current Windows user's account after prompting for that user's password."
+- Windows Service identity is always the service logon account. This wrapper does not support a mode that automatically follows the current interactive user session.
+
 ## Core Fields
 
 - `serviceName`: Windows service name and WinSW artifact base name
@@ -45,7 +51,7 @@ After that first successful install, later operational scripts can omit `-Config
 - `stateDir`: OpenClaw state directory
 - `configPath`: OpenClaw config file path passed to the OpenClaw CLI
 - `tempDir`: temp directory exported to the service process
-- `serviceAccountMode`: `currentUser` or `credential`
+- `serviceAccountMode`: `credential` or `currentUser` (deprecated compatibility alias)
 - `openclawCommand`: optional explicit path or command name for the OpenClaw CLI
 - `allowForceBind`: controls whether `--force` is appended
 
@@ -63,10 +69,12 @@ After that first successful install, later operational scripts can omit `-Config
 - State dir: `%USERPROFILE%\.openclaw`
 - Config path: `%USERPROFILE%\.openclaw\openclaw.json`
 - Temp dir: `%LOCALAPPDATA%\Temp`
-- Service account mode: `currentUser`
+- Service account mode: `credential`
 - Force bind: `false`
 
-`currentUser` means the installer resolves paths against the invoking user profile and prompts for that user's password during installation.
+`credential` means the installer resolves identity-aware paths against the selected Windows service account and prompts for credentials during installation when needed.
+
+`currentUser` is a deprecated compatibility alias. It still prompts for the current Windows user's password and installs the service under that same user account, but it should not be interpreted as a separate runtime model.
 
 ## Example Wrapper Configs
 
@@ -97,7 +105,7 @@ These example files are overlays, not full manifests. They rely on repository de
   "stateDir": "%USERPROFILE%\\.openclaw",
   "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json",
   "tempDir": "%LOCALAPPDATA%\\Temp",
-  "serviceAccountMode": "currentUser",
+  "serviceAccountMode": "credential",
   "openclawCommand": "",
   "allowForceBind": false,
   "winswVersion": "2.12.0",

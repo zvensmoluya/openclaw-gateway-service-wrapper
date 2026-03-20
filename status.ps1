@@ -10,6 +10,8 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
 
 try {
+  $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
+  $emptyWarnings = [System.Collections.ArrayList]::new()
   $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath -AllowInvalidRemembered
   if ($selection.ContainsKey('invalidReason')) {
     $service = if ([string]::IsNullOrWhiteSpace($selection.rememberedServiceName)) {
@@ -24,6 +26,16 @@ try {
       }
     } else {
       Get-ServiceDetails -ServiceName $selection.rememberedServiceName
+    }
+
+    $actualExecutablePath = Get-ServiceExecutablePathFromPathName -PathName $service.pathName
+    $identity = @{
+      configuredMode   = $null
+      deprecatedAlias  = $false
+      expectedStartName = $null
+      actualStartName  = if ($service.installed) { $service.startName } else { $null }
+      matches          = $false
+      installLayout    = Get-ServiceInstallLayoutFromExecutablePath -ExecutablePath $actualExecutablePath
     }
 
     $report = @{
@@ -43,6 +55,8 @@ try {
         sourcePath    = $selection.sourcePath
         rememberedPath = $selection.rememberedPath
       }
+      identity    = $identity
+      warnings    = $emptyWarnings
       issues      = @($selection.invalidReason)
     }
 
@@ -52,6 +66,8 @@ try {
       Write-Host "Service name : $($selection.rememberedServiceName)"
       Write-Host "Config       : $($selection.sourcePath) [$($selection.configSource)]"
       Write-Host "Remembered   : $($selection.rememberedPath)"
+      Write-Host "Run as       : $($identity.actualStartName)"
+      Write-Host "Layout       : $($identity.installLayout)"
       Write-Host 'Health       : FAILED'
       Write-Host $selection.invalidReason
     }
@@ -59,12 +75,36 @@ try {
     exit 1
   }
 
-  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $bootstrapConfig = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $service = Get-ServiceDetails -ServiceName $bootstrapConfig.serviceName
+  $inspectionIdentityContext = Resolve-InspectionIdentityContext -Config $bootstrapConfig -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $inspectionIdentityContext
   $config.configSource = $selection.configSource
   $config.rememberedPath = $selection.rememberedPath
-  $service = Get-ServiceDetails -ServiceName $config.serviceName
+  $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
+  $warnings = [System.Collections.ArrayList]::new()
   $issues = @()
+
+  if ($identity.deprecatedAlias) {
+    [void]$warnings.Add("serviceAccountMode 'currentUser' is deprecated. Use 'credential' for Windows Service installs.")
+  }
+
+  if ($service.installed -and $identity.installLayout -eq 'legacyRoot' -and $identity.configuredMode -eq 'currentUser' -and [string]::IsNullOrWhiteSpace($identity.expectedStartName)) {
+    [void]$warnings.Add("Service '$($config.serviceName)' uses the legacy root WinSW layout and does not expose an explicit service account in XML, so the expected account cannot be inferred reliably. Reinstall with the current wrapper to capture service account metadata.")
+  }
+
+  if ($service.installed -and $identity.installLayout -eq 'legacyRoot') {
+    $issues += "Service '$($config.serviceName)' is still using the legacy root WinSW layout. Reinstall with the current wrapper so service account settings and explicit ConfigPath are preserved."
+  }
+
+  if ($service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) -and [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and $identity.configuredMode -eq 'credential') {
+    $issues += "Service '$($config.serviceName)' is running as built-in account '$($identity.actualStartName)'. credential mode requires an explicit Windows account. Reinstall with explicit credentials."
+  } elseif ($service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) -and -not [string]::IsNullOrWhiteSpace($identity.expectedStartName)) {
+    $issues += "Service '$($config.serviceName)' is running as built-in account '$($identity.actualStartName)' but the configured model expects user account '$($identity.expectedStartName)'. Reinstall with explicit credentials."
+  } elseif ($service.installed -and -not [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and -not $identity.matches) {
+    $issues += "Service '$($config.serviceName)' is running as '$($identity.actualStartName)' but expected '$($identity.expectedStartName)'. Reinstall with explicit credentials."
+  }
 
   if (-not $service.installed) {
     $issues += "Service '$($config.serviceName)' is not installed."
@@ -90,6 +130,8 @@ try {
       sourcePath    = $config.sourceConfigPath
       rememberedPath = $config.rememberedPath
     }
+    identity    = $identity
+    warnings    = $warnings
     issues      = $issues
   }
 
@@ -99,6 +141,11 @@ try {
     Write-Host "Service name : $($config.serviceName)"
     Write-Host "Config       : $($config.sourceConfigPath) [$($config.configSource)]"
     Write-Host "Remembered   : $($config.rememberedPath)"
+    Write-Host "Configured   : $($identity.configuredMode)"
+    Write-Host "Deprecated   : $($identity.deprecatedAlias)"
+    Write-Host "Expected run : $($identity.expectedStartName)"
+    Write-Host "Actual run   : $($identity.actualStartName)"
+    Write-Host "Layout       : $($identity.installLayout)"
     Write-Host "Installed    : $($service.installed)"
     Write-Host "Status       : $($service.status)"
     Write-Host "Start type   : $($service.startType)"
@@ -109,6 +156,14 @@ try {
     } else {
       Write-Host 'Health       : FAILED'
       Write-Host $health.error
+    }
+
+    if ($warnings.Count -gt 0) {
+      Write-Host ''
+      Write-Host 'Warnings'
+      foreach ($warning in $warnings) {
+        Write-Host "- $warning"
+      }
     }
 
     if ($issues.Count -gt 0) {

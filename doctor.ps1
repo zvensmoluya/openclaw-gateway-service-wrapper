@@ -10,8 +10,11 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
 
 $issues = @()
+$warnings = [System.Collections.ArrayList]::new()
 
 try {
+  $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
+  $emptyWarnings = [System.Collections.ArrayList]::new()
   $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath -AllowInvalidRemembered
   if ($selection.ContainsKey('invalidReason')) {
     $service = if ([string]::IsNullOrWhiteSpace($selection.rememberedServiceName)) {
@@ -28,6 +31,16 @@ try {
       Get-ServiceDetails -ServiceName $selection.rememberedServiceName
     }
 
+    $actualExecutablePath = Get-ServiceExecutablePathFromPathName -PathName $service.pathName
+    $identity = @{
+      configuredMode   = $null
+      deprecatedAlias  = $false
+      expectedStartName = $null
+      actualStartName  = if ($service.installed) { $service.startName } else { $null }
+      matches          = $false
+      installLayout    = Get-ServiceInstallLayoutFromExecutablePath -ExecutablePath $actualExecutablePath
+    }
+
     $report = @{
       serviceName = $selection.rememberedServiceName
       config      = @{
@@ -41,6 +54,8 @@ try {
         port                = $null
         bind                = $null
       }
+      identity = $identity
+      warnings = $emptyWarnings
       dependencies = @{
         openclawCommand = $null
         winswExecutable = $null
@@ -64,6 +79,8 @@ try {
       Write-Host "Config path       : $($selection.sourcePath)"
       Write-Host "Config source     : $($selection.configSource)"
       Write-Host "Remembered path   : $($selection.rememberedPath)"
+      Write-Host "Run as            : $($identity.actualStartName)"
+      Write-Host "Install layout    : $($identity.installLayout)"
       Write-Host ''
       Write-Host 'Issues'
       Write-Host "- $($selection.invalidReason)"
@@ -72,19 +89,42 @@ try {
     exit 1
   }
 
-  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $bootstrapConfig = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $service = Get-ServiceDetails -ServiceName $bootstrapConfig.serviceName
+  $inspectionIdentityContext = Resolve-InspectionIdentityContext -Config $bootstrapConfig -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $inspectionIdentityContext
   $config.configSource = $selection.configSource
   $config.rememberedPath = $selection.rememberedPath
   $layout = Get-ServiceArtifactLayout -Config $config
-  $service = Get-ServiceDetails -ServiceName $config.serviceName
+  $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $reportedWinSWExecutable = if ($service.installed -and -not [string]::IsNullOrWhiteSpace($service.pathName)) {
+    Get-ServiceExecutablePathFromPathName -PathName $service.pathName
+  } elseif ($identity.installLayout -eq 'legacyRoot') {
+    $layout.legacyExecutablePath
+  } else {
+    $layout.generatedExecutablePath
+  }
+  $reportedWinSWXml = if ($identity.installLayout -eq 'legacyRoot') {
+    $layout.legacyXmlPath
+  } else {
+    $layout.generatedXmlPath
+  }
   $listeners = @(Get-PortListeners -Port $config.port)
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
   $openclawCommand = $null
 
   try {
-    $openclawCommand = Resolve-OpenClawCommandPath -Config $config -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $openclawCommand = Resolve-OpenClawCommandPath -Config $config -IdentityContext $inspectionIdentityContext
   } catch {
     $issues += $_.Exception.Message
+  }
+
+  if ($identity.deprecatedAlias) {
+    [void]$warnings.Add("serviceAccountMode 'currentUser' is deprecated. Use 'credential' for Windows Service installs.")
+  }
+
+  if ($service.installed -and $identity.installLayout -eq 'legacyRoot' -and $identity.configuredMode -eq 'currentUser' -and [string]::IsNullOrWhiteSpace($identity.expectedStartName)) {
+    [void]$warnings.Add("Service '$($config.serviceName)' uses the legacy root WinSW layout and does not expose an explicit service account in XML, so the expected account cannot be inferred reliably. Reinstall with the current wrapper to capture service account metadata.")
   }
 
   if (-not (Test-Path -LiteralPath $config.stateDir)) {
@@ -92,6 +132,18 @@ try {
   }
 
   $issues += @(Get-GatewayConfigValidationIssues -Config $config)
+
+  if ($service.installed -and $identity.installLayout -eq 'legacyRoot') {
+    $issues += "Service '$($config.serviceName)' is still using the legacy root WinSW layout. Reinstall with the current wrapper so service account settings and explicit ConfigPath are preserved."
+  }
+
+  if ($service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) -and [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and $identity.configuredMode -eq 'credential') {
+    $issues += "Service '$($config.serviceName)' is running as built-in account '$($identity.actualStartName)'. credential mode requires an explicit Windows account. Reinstall with explicit credentials."
+  } elseif ($service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) -and -not [string]::IsNullOrWhiteSpace($identity.expectedStartName)) {
+    $issues += "Service '$($config.serviceName)' is running as built-in account '$($identity.actualStartName)' but the configured model expects user account '$($identity.expectedStartName)'. Reinstall with explicit credentials."
+  } elseif ($service.installed -and -not [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and -not $identity.matches) {
+    $issues += "Service '$($config.serviceName)' is running as '$($identity.actualStartName)' but expected '$($identity.expectedStartName)'. Reinstall with explicit credentials."
+  }
 
   if (-not $service.installed) {
     $issues += "Service '$($config.serviceName)' is not installed."
@@ -122,10 +174,12 @@ try {
       port               = $config.port
       bind               = $config.bind
     }
+    identity = $identity
+    warnings = $warnings
     dependencies = @{
       openclawCommand = $openclawCommand
-      winswExecutable = $layout.generatedExecutablePath
-      winswXml        = $layout.generatedXmlPath
+      winswExecutable = $reportedWinSWExecutable
+      winswXml        = $reportedWinSWXml
     }
     service   = $service
     health    = $health
@@ -140,14 +194,26 @@ try {
     Write-Host "Config path       : $($config.sourceConfigPath)"
     Write-Host "Config source     : $($config.configSource)"
     Write-Host "Remembered path   : $($config.rememberedPath)"
+    Write-Host "Configured mode   : $($identity.configuredMode)"
+    Write-Host "Deprecated alias  : $($identity.deprecatedAlias)"
+    Write-Host "Expected run as   : $($identity.expectedStartName)"
+    Write-Host "Actual run as     : $($identity.actualStartName)"
+    Write-Host "Install layout    : $($identity.installLayout)"
     Write-Host "Gateway config    : $($config.gatewayConfigPath)"
     Write-Host "OpenClaw command  : $openclawCommand"
-    Write-Host "WinSW executable  : $($layout.generatedExecutablePath)"
-    Write-Host "WinSW XML         : $($layout.generatedXmlPath)"
+    Write-Host "WinSW executable  : $reportedWinSWExecutable"
+    Write-Host "WinSW XML         : $reportedWinSWXml"
     Write-Host "Service installed : $($service.installed)"
     Write-Host "Service status    : $($service.status)"
     Write-Host "Port listeners    : $($listeners.Count)"
     Write-Host "Health OK         : $($health.ok)"
+    if ($warnings.Count -gt 0) {
+      Write-Host ''
+      Write-Host 'Warnings'
+      foreach ($warning in $warnings) {
+        Write-Host "- $warning"
+      }
+    }
     if ($issues.Count -gt 0) {
       Write-Host ''
       Write-Host 'Issues'

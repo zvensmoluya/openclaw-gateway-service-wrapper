@@ -20,6 +20,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 如果旧安装已经不健康、需要强制替换，可以加 `-Force`。
 
+如果 `status.ps1` 或 `doctor.ps1` 报告当前服务仍然是 `LocalSystem`，或者仍在使用 `legacyRoot` 布局，请带着显式凭据重新安装一次，让 WinSW 正确重写服务账户。
+
 ## 卸载
 
 ```powershell
