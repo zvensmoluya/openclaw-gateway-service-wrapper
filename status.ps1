@@ -98,11 +98,14 @@ try {
     $issues += "Service '$($config.serviceName)' is still using the legacy root WinSW layout. Reinstall with the current wrapper so service account settings and explicit ConfigPath are preserved."
   }
 
-  if ($service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) -and [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and $identity.configuredMode -eq 'credential') {
+  $hasExpectedIdentity = -not [string]::IsNullOrWhiteSpace($identity.expectedStartName)
+  $actualIsBuiltInServiceAccount = $service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName)
+
+  if ($actualIsBuiltInServiceAccount -and -not ($hasExpectedIdentity -and $identity.matches) -and -not $hasExpectedIdentity -and $identity.configuredMode -eq 'credential') {
     $issues += "Service '$($config.serviceName)' is running as built-in account '$($identity.actualStartName)'. credential mode requires an explicit Windows account. Reinstall with explicit credentials."
-  } elseif ($service.installed -and (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) -and -not [string]::IsNullOrWhiteSpace($identity.expectedStartName)) {
+  } elseif ($actualIsBuiltInServiceAccount -and -not ($hasExpectedIdentity -and $identity.matches) -and $hasExpectedIdentity) {
     $issues += "Service '$($config.serviceName)' is running as built-in account '$($identity.actualStartName)' but the configured model expects user account '$($identity.expectedStartName)'. Reinstall with explicit credentials."
-  } elseif ($service.installed -and -not [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and -not $identity.matches) {
+  } elseif ($service.installed -and $hasExpectedIdentity -and -not $identity.matches) {
     $issues += "Service '$($config.serviceName)' is running as '$($identity.actualStartName)' but expected '$($identity.expectedStartName)'. Reinstall with explicit credentials."
   }
 

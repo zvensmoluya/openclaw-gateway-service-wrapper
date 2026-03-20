@@ -66,7 +66,7 @@ try {
 
   $listeners = @(Get-PortListeners -Port $config.port)
   if ($listeners.Count -gt 0 -and -not $config.allowForceBind) {
-    $details = $listeners | ForEach-Object { "$($_.processName)#$($_.processId)@$($_.localAddress):$($_.localPort)" }
+    $details = $listeners | ForEach-Object { (($_ | Out-String).Trim()) }
     throw "Port $($config.port) is already in use. Either stop the listed listeners first or set allowForceBind to true. Listeners: $($details -join ', ')"
   }
 
@@ -104,6 +104,6 @@ try {
 
   exit 0
 } catch {
-  Write-Error $_
+  [Console]::Error.WriteLine($_.Exception.Message)
   exit 1
 }

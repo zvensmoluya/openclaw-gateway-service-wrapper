@@ -23,4 +23,16 @@ Describe 'Get-ServiceArtifactLayout' {
 
     Assert-Equal (Get-EffectiveServiceAccountMode -Config $config -Credential $credential) 'credential'
   }
+
+  It 'returns an empty collection when a port has no listeners' {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $listener.Stop()
+    Start-Sleep -Milliseconds 100
+
+    $listeners = @(Get-PortListeners -Port $port)
+
+    $listeners.Count | Should -Be 0
+  }
 }

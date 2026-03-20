@@ -489,8 +489,8 @@ function Assert-ServiceConfig {
   }
 
   $normalizedMode = $Config.serviceAccountMode.ToString().Trim()
-  if ($normalizedMode -notin @('currentUser', 'credential')) {
-    throw "serviceAccountMode '$normalizedMode' is not supported. Use currentUser or credential."
+  if ($normalizedMode -notin @('currentUser', 'credential', 'localSystem')) {
+    throw "serviceAccountMode '$normalizedMode' is not supported. Use currentUser, credential, or localSystem."
   }
 
   if ([string]::IsNullOrWhiteSpace($Config.winswVersion)) {
@@ -597,9 +597,16 @@ function Resolve-ServiceAccountPlan {
         $expectedStartName = Get-ExpectedServiceStartName -UserName $resolvedCredential.UserName
       }
     }
-    default {
-      throw "serviceAccountMode '$configuredMode' is not supported. Use credential or currentUser."
+    'localSystem' {
+      $expectedStartName = 'LocalSystem'
     }
+    default {
+      throw "serviceAccountMode '$configuredMode' is not supported. Use credential, currentUser, or localSystem."
+    }
+  }
+
+  if (($null -ne $resolvedCredential) -and [string]::IsNullOrEmpty($resolvedCredential.GetNetworkCredential().Password)) {
+    throw "Windows services cannot log on with a blank password for account '$($resolvedCredential.UserName)'. Set a password on that account or use serviceAccountMode 'localSystem'."
   }
 
   $identityContext = if (-not [string]::IsNullOrWhiteSpace($expectedStartName)) {
@@ -610,7 +617,7 @@ function Resolve-ServiceAccountPlan {
 
   return @{
     configuredMode     = $configuredMode
-    effectiveMode      = 'credential'
+    effectiveMode      = if ($configuredMode -eq 'localSystem') { 'localSystem' } else { 'credential' }
     deprecatedAlias    = $deprecatedAlias
     expectedStartName  = $expectedStartName
     identityContext    = $identityContext
@@ -1013,7 +1020,15 @@ function Get-ServiceInstallValidationIssues {
   $issues = @()
 
   if (Test-IsBuiltInServiceAccount -AccountName $identity.actualStartName) {
-    $issues += "Service '$($Config.serviceName)' was installed as built-in account '$($identity.actualStartName)'. Reinstall with explicit credentials so the service runs under '$($identity.expectedStartName)'."
+    if (-not ([string]::IsNullOrWhiteSpace($identity.expectedStartName)) -and $identity.matches) {
+      return [string[]]$issues
+    }
+
+    if ([string]::IsNullOrWhiteSpace($identity.expectedStartName)) {
+      $issues += "Service '$($Config.serviceName)' was installed as built-in account '$($identity.actualStartName)'. Reinstall with explicit credentials."
+    } else {
+      $issues += "Service '$($Config.serviceName)' is running as '$($identity.actualStartName)', but the planned service account is '$($identity.expectedStartName)'. Reinstall with explicit credentials."
+    }
   } elseif (-not [string]::IsNullOrWhiteSpace($identity.expectedStartName) -and -not $identity.matches) {
     $issues += "Service '$($Config.serviceName)' is running as '$($identity.actualStartName)', but the planned service account is '$($identity.expectedStartName)'. Reinstall with explicit credentials."
   }
@@ -1088,7 +1103,7 @@ function Render-WinSWServiceXml {
   param(
     [Parameter(Mandatory = $true)]
     [hashtable]$Config,
-    [ValidateSet('currentUser', 'credential')]
+    [ValidateSet('currentUser', 'credential', 'localSystem')]
     [string]$ServiceAccountMode = 'currentUser',
     [pscredential]$Credential
   )
@@ -1154,7 +1169,7 @@ function Write-WinSWServiceXml {
   param(
     [Parameter(Mandatory = $true)]
     [hashtable]$Config,
-    [ValidateSet('currentUser', 'credential')]
+    [ValidateSet('currentUser', 'credential', 'localSystem')]
     [string]$ServiceAccountMode = 'currentUser',
     [pscredential]$Credential
   )
@@ -1355,7 +1370,7 @@ function Get-PortListeners {
     }
   }
 
-  return [object[]]($listeners | Sort-Object processId -Unique)
+  return @($listeners | Where-Object { $null -ne $_ } | Sort-Object processId -Unique)
 }
 
 function Invoke-HealthCheck {

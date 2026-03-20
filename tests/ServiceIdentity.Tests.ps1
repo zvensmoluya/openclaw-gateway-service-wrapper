@@ -117,6 +117,31 @@ Describe 'Service identity planning' {
     $plan.expectedStartName | Should -Be 'CONTOSO\svc-openclaw'
   }
 
+  It 'supports LocalSystem mode without prompting for credentials' {
+    $configPath = New-ServiceIdentityConfigFile -Overrides @{ serviceAccountMode = 'localSystem' }
+    $script:testPaths += $configPath
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+
+    $plan = Resolve-ServiceAccountPlan -Config $config -CurrentWindowsIdentityName $script:currentWindowsIdentityName
+
+    $plan.configuredMode | Should -Be 'localSystem'
+    $plan.effectiveMode | Should -Be 'localSystem'
+    $plan.deprecatedAlias | Should -BeFalse
+    $plan.requiresCredential | Should -BeFalse
+    $plan.expectedStartName | Should -Be 'LocalSystem'
+    $plan.identityContext.profileRoot | Should -Match 'System32\\Config\\SystemProfile$'
+  }
+
+  It 'rejects blank-password credentials before attempting service install' {
+    $configPath = New-ServiceIdentityConfigFile
+    $script:testPaths += $configPath
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $secure = New-Object System.Security.SecureString
+    $credential = New-Object System.Management.Automation.PSCredential('CONTOSO\svc-openclaw', $secure)
+
+    { Resolve-ServiceAccountPlan -Config $config -Credential $credential -CurrentWindowsIdentityName $script:currentWindowsIdentityName } | Should -Throw '*blank password*'
+  }
+
   It 'flags a LocalSystem install result as invalid for a credential-backed service' {
     $configPath = New-ServiceIdentityConfigFile
     $script:testPaths += $configPath
@@ -139,7 +164,29 @@ Describe 'Service identity planning' {
     $issues = @(Get-ServiceInstallValidationIssues -Config $config -ServiceDetails $serviceDetails -CurrentWindowsIdentityName $script:currentWindowsIdentityName)
 
     $issues.Count | Should -Be 1
-    $issues[0] | Should -Match 'was installed as built-in account'
+    $issues[0] | Should -Match 'planned service account'
+  }
+
+  It 'accepts a LocalSystem install result when configured for LocalSystem' {
+    $configPath = New-ServiceIdentityConfigFile -Overrides @{ serviceAccountMode = 'localSystem' }
+    $script:testPaths += $configPath
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+
+    Write-WinSWServiceXml -Config $config -ServiceAccountMode 'localSystem' | Out-Null
+    $script:testPaths += (Join-Path $env:TEMP "$($config.serviceName)-winsw")
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'LocalSystem'
+      pathName  = ('"{0}"' -f (Join-Path $config.winswHome "$($config.serviceName)\$($config.serviceName).exe"))
+    }
+
+    $issues = @(Get-ServiceInstallValidationIssues -Config $config -ServiceDetails $serviceDetails -CurrentWindowsIdentityName $script:currentWindowsIdentityName)
+
+    $issues.Count | Should -Be 0
   }
 
   It 'flags a mismatched user account after install' {

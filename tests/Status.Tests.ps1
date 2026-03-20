@@ -12,6 +12,10 @@ Describe 'status.ps1' {
     }
 
     function script:New-StatusTestConfig {
+      param(
+        [hashtable]$Overrides = @{}
+      )
+
       $serviceName = "StatusTest-$([guid]::NewGuid().ToString('N'))"
       $configPath = Join-Path $env:TEMP "$serviceName-wrapper.json"
       $config = @{
@@ -27,6 +31,10 @@ Describe 'status.ps1' {
         logPolicy          = @{
           mode = 'rotate'
         }
+      }
+
+      foreach ($key in $Overrides.Keys) {
+        $config[$key] = $Overrides[$key]
       }
 
       Set-Content -LiteralPath $configPath -Value ($config | ConvertTo-Json -Depth 10) -Encoding UTF8
@@ -152,6 +160,50 @@ Describe 'status.ps1' {
 
     $report.PSObject.Properties.Name | Should -Contain 'warnings'
     @($report.warnings).Count | Should -Be 1
+    @($report.issues).Count | Should -Be 0
+  }
+
+  It 'accepts a LocalSystem service when configured for localSystem' {
+    $configPath = New-StatusTestConfig -Overrides @{ serviceAccountMode = 'localSystem' }
+    $script:testPaths += $configPath
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'LocalSystem'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode   = 'localSystem'
+        deprecatedAlias  = $false
+        expectedStartName = 'LocalSystem'
+        actualStartName  = 'LocalSystem'
+        matches          = $true
+        installLayout    = 'generated'
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
+
+    $output = & $script:statusScript -ConfigPath $configPath -Json
+    $LASTEXITCODE | Should -Be 0
+    $report = $output | ConvertFrom-Json
+
+    @($report.warnings).Count | Should -Be 0
     @($report.issues).Count | Should -Be 0
   }
 }

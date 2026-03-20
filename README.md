@@ -29,7 +29,7 @@ Install with an explicit wrapper config:
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
-The repository default now uses `serviceAccountMode: credential`, so installation prompts for the Windows account that should own the service. This wrapper is a Windows Service package, not a "follow the currently logged-in user" agent.
+The repository default now uses `serviceAccountMode: credential`, so installation prompts for the Windows account that should own the service. This wrapper is a Windows Service package, not a "follow the currently logged-in user" agent. If you cannot or do not want to use a password-backed Windows user account for the service, use `serviceAccountMode: localSystem` with explicit absolute paths to the desired OpenClaw files.
 
 4. Check health:
 
@@ -57,6 +57,7 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 
 - `service-config.local.example.json`: current-user compatibility alias for local installs; still installs a credential-backed Windows Service
 - `service-config.credential.example.json`: service-account install with machine-level paths
+- `service-config.local-system.example.json`: LocalSystem install example for machines where the user account does not have a service-usable password
 - `service-config.custom-port.example.json`: alternate service name and port
 
 ## Service Account Support
@@ -64,6 +65,7 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 - Default mode is `credential`.
 - `credential` is the recommended Windows Service mode. It installs the service under an explicit Windows account and prompts for credentials when they are not supplied on the command line.
 - `currentUser` is still accepted as a deprecated compatibility alias. It means "prompt for the current Windows user's credential and install the service under that account." It does not mean "run inside the current interactive user session."
+- `localSystem` installs the service as the built-in `LocalSystem` account without prompting for credentials. When you want that service to use files from a regular user profile, set `stateDir`, `configPath`, `tempDir`, and `openclawCommand` to absolute user-owned paths.
 - To install under another account, pass a credential at install time:
 
 ```powershell

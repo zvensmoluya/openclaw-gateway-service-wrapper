@@ -178,9 +178,18 @@ Describe 'Wrapper config selection' {
 
     $missingConfig = Join-Path $env:TEMP "missing-install-config-$([guid]::NewGuid()).json"
     $installScript = Join-Path $script:repoRoot 'install.ps1'
-    $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installScript -ConfigPath $missingConfig 2>&1
+    $stdoutPath = Join-Path $env:TEMP "install-config-selection-stdout-$([guid]::NewGuid()).log"
+    $stderrPath = Join-Path $env:TEMP "install-config-selection-stderr-$([guid]::NewGuid()).log"
+    $script:testPaths += @($stdoutPath, $stderrPath)
 
-    $LASTEXITCODE | Should -Be 1
+    $process = Start-Process powershell.exe -ArgumentList @(
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', $installScript,
+      '-ConfigPath', $missingConfig
+    ) -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+
+    $process.ExitCode | Should -Be 1
 
     $after = Wait-ForRememberedConfigSelection
     $after | Should -Not -Be $null
