@@ -13,7 +13,7 @@ jobs:
         shell: powershell
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Pester
         run: Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -RequiredVersion 5.5.0
