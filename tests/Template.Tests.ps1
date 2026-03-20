@@ -1,8 +1,10 @@
-$repoRoot = Split-Path -Parent $PSScriptRoot
-Import-Module (Join-Path $repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
-. (Join-Path $PSScriptRoot 'TestHelpers.ps1')
-
 Describe 'Render-WinSWServiceXml' {
+  BeforeAll {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    Import-Module (Join-Path $repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
+    . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
+  }
+
   It 'renders a WinSW service definition with start and stop scripts' {
     $identity = Get-ServiceIdentityContext -Mode 'currentUser'
     $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity

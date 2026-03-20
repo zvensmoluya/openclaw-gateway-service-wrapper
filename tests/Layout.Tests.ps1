@@ -1,8 +1,10 @@
-$repoRoot = Split-Path -Parent $PSScriptRoot
-Import-Module (Join-Path $repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
-. (Join-Path $PSScriptRoot 'TestHelpers.ps1')
-
 Describe 'Get-ServiceArtifactLayout' {
+  BeforeAll {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    Import-Module (Join-Path $repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
+    . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
+  }
+
   It 'uses the generated tools directory for WinSW artifacts' {
     $identity = Get-ServiceIdentityContext -Mode 'currentUser'
     $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
