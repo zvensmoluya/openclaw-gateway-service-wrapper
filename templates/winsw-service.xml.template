@@ -1,0 +1,21 @@
+<service>
+  <id>{{SERVICE_ID}}</id>
+  <name>{{DISPLAY_NAME}}</name>
+  <description>{{SERVICE_DESCRIPTION}}</description>
+  <executable>{{EXECUTABLE}}</executable>
+  <arguments>{{ARGUMENTS}}</arguments>
+  <workingdirectory>{{WORKING_DIRECTORY}}</workingdirectory>
+  <logpath>{{LOG_PATH}}</logpath>
+  <log mode="{{LOG_MODE}}"></log>
+  <startmode>{{START_MODE}}</startmode>
+{{DELAYED_AUTO_START_BLOCK}}
+  <resetfailure>{{RESET_FAILURE}}</resetfailure>
+{{ON_FAILURE_BLOCK}}
+  <stoptimeout>{{STOP_TIMEOUT}}</stoptimeout>
+  <stopparentprocessfirst>false</stopparentprocessfirst>
+  <stopexecutable>{{STOP_EXECUTABLE}}</stopexecutable>
+  <stoparguments>{{STOP_ARGUMENTS}}</stoparguments>
+  <waithint>30 sec</waithint>
+  <sleeptime>1 sec</sleeptime>
+{{SERVICE_ACCOUNT_BLOCK}}
+</service>

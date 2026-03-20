@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester
+        run: Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -RequiredVersion 5.5.0
+
+      - name: Run tests
+        run: |
+          Import-Module Pester -RequiredVersion 5.5.0 -Force
+          Invoke-Pester -Path .\tests -CI
+
+      - name: Build release package
+        run: powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version $env:GITHUB_REF_NAME
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: dist/*.zip
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true

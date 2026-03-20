@@ -1,0 +1,25 @@
+# Generated service/runtime artifacts
+logs/
+dist/
+tools/
+.runtime/
+*.log
+*.tmp
+
+# Legacy local artifacts from the pre-repo layout
+OpenClawService.exe
+OpenClawService.xml
+install-service.log
+reinstall-after-stopfix.log
+restart-service.log
+restart-service-2.log
+restart-service-3.log
+
+# Local configuration overrides
+service-config.local.json
+
+# GitHub Actions / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester
+        run: Install-Module Pester -Scope CurrentUser -Force -SkipPublisherCheck -RequiredVersion 5.5.0
+
+      - name: Parse PowerShell files
+        run: |
+          $parseErrors = @()
+          $files = Get-ChildItem -Path . -Include *.ps1,*.psm1 -File -Recurse
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              foreach ($error in $errors) {
+                $parseErrors += "{0}: {1}" -f $file.FullName, $error.Message
+              }
+            }
+          }
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+      - name: Run Pester
+        run: |
+          Import-Module Pester -RequiredVersion 5.5.0 -Force
+          Invoke-Pester -Path .\tests -CI
+
+      - name: Build release package
+        run: powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version ci
+
+      - name: Verify release archive exists
+        run: |
+          if (-not (Test-Path .\dist\openclaw-gateway-service-wrapper-ci.zip)) {
+            throw 'Release archive was not created.'
+          }
