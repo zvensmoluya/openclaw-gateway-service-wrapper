@@ -3,6 +3,13 @@ Describe 'doctor.ps1' {
     $script:repoRoot = Split-Path -Parent $PSScriptRoot
     Import-Module (Join-Path $script:repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
     $script:doctorScript = Join-Path $script:repoRoot 'doctor.ps1'
+    $script:rememberedMetadataPath = Get-RememberedConfigMetadataPath
+    $script:rememberedMetadataBackup = $null
+
+    if (Test-Path -LiteralPath $script:rememberedMetadataPath) {
+      $script:rememberedMetadataBackup = Join-Path $env:TEMP "doctor-active-config-backup-$([guid]::NewGuid()).json"
+      Copy-Item -LiteralPath $script:rememberedMetadataPath -Destination $script:rememberedMetadataBackup -Force
+    }
 
     function script:New-DoctorTestConfig {
       param(
@@ -47,10 +54,12 @@ Describe 'doctor.ps1' {
   }
 
   BeforeEach {
+    [void](Clear-RememberedServiceConfigSelection)
     $script:testPaths = @()
   }
 
   AfterEach {
+    [void](Clear-RememberedServiceConfigSelection)
     foreach ($path in $script:testPaths) {
       if (Test-Path -LiteralPath $path) {
         if ((Get-Item -LiteralPath $path).PSIsContainer) {
@@ -59,6 +68,16 @@ Describe 'doctor.ps1' {
           Remove-Item -LiteralPath $path -Force
         }
       }
+    }
+  }
+
+  AfterAll {
+    [void](Clear-RememberedServiceConfigSelection)
+
+    if ($null -ne $script:rememberedMetadataBackup -and (Test-Path -LiteralPath $script:rememberedMetadataBackup)) {
+      New-Item -ItemType Directory -Path (Split-Path -Parent $script:rememberedMetadataPath) -Force | Out-Null
+      Copy-Item -LiteralPath $script:rememberedMetadataBackup -Destination $script:rememberedMetadataPath -Force
+      Remove-Item -LiteralPath $script:rememberedMetadataBackup -Force
     }
   }
 

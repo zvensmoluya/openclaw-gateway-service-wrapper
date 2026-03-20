@@ -62,6 +62,7 @@ Describe 'Wrapper config selection' {
     [void](Clear-RememberedServiceConfigSelection)
 
     if ($null -ne $script:rememberedMetadataBackup -and (Test-Path -LiteralPath $script:rememberedMetadataBackup)) {
+      New-Item -ItemType Directory -Path (Split-Path -Parent $script:rememberedMetadataPath) -Force | Out-Null
       Copy-Item -LiteralPath $script:rememberedMetadataBackup -Destination $script:rememberedMetadataPath -Force
       Remove-Item -LiteralPath $script:rememberedMetadataBackup -Force
     }
