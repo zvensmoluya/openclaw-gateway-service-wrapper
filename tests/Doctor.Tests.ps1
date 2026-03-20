@@ -1,0 +1,116 @@
+Describe 'doctor.ps1' {
+  BeforeAll {
+    $script:repoRoot = Split-Path -Parent $PSScriptRoot
+    $script:doctorScript = Join-Path $script:repoRoot 'doctor.ps1'
+
+    function script:New-DoctorTestConfig {
+      param(
+        [Parameter(Mandatory = $true)]
+        [string]$GatewayConfigPath,
+        [Parameter(Mandatory = $true)]
+        [string]$StateDir
+      )
+
+      $serviceName = "DoctorTest-$([guid]::NewGuid().ToString('N'))"
+      $configPath = Join-Path $env:TEMP "$serviceName-wrapper.json"
+      $config = @{
+        serviceName     = $serviceName
+        displayName     = $serviceName
+        description     = "Doctor test for $serviceName"
+        port            = 19100
+        stateDir        = $StateDir
+        configPath      = $GatewayConfigPath
+        tempDir         = $env:TEMP
+        openclawCommand = 'powershell.exe'
+        logPolicy       = @{
+          mode = 'rotate'
+        }
+      }
+
+      Set-Content -LiteralPath $configPath -Value ($config | ConvertTo-Json -Depth 10) -Encoding UTF8
+      return $configPath
+    }
+
+    function script:Invoke-DoctorJson {
+      param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigPath
+      )
+
+      $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script:doctorScript -Json -ConfigPath $ConfigPath
+      return @{
+        exitCode = $LASTEXITCODE
+        report   = ($output | ConvertFrom-Json)
+      }
+    }
+  }
+
+  BeforeEach {
+    $script:testPaths = @()
+  }
+
+  AfterEach {
+    foreach ($path in $script:testPaths) {
+      if (Test-Path -LiteralPath $path) {
+        if ((Get-Item -LiteralPath $path).PSIsContainer) {
+          Remove-Item -LiteralPath $path -Recurse -Force
+        } else {
+          Remove-Item -LiteralPath $path -Force
+        }
+      }
+    }
+  }
+
+  It 'reports a missing OpenClaw config file' {
+    $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
+    $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
+    $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
+    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
+    $script:testPaths += @($stateDir, $gatewayDir, $configPath)
+
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $gatewayDir -Force | Out-Null
+
+    $result = Invoke-DoctorJson -ConfigPath $configPath
+
+    $result.exitCode | Should -Be 1
+    $result.report.config.configSource | Should -Be 'explicit'
+    $result.report.config.sourcePath | Should -Be $configPath
+    @($result.report.issues) | Should -Contain "Gateway config file does not exist: $gatewayConfigPath"
+  }
+
+  It 'reports invalid OpenClaw config JSON' {
+    $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
+    $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
+    $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
+    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
+    $script:testPaths += @($stateDir, $gatewayDir, $gatewayConfigPath, $configPath)
+
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $gatewayDir -Force | Out-Null
+    Set-Content -LiteralPath $gatewayConfigPath -Value '{ invalid json' -Encoding UTF8
+
+    $result = Invoke-DoctorJson -ConfigPath $configPath
+
+    $result.exitCode | Should -Be 1
+    (@($result.report.issues) | Where-Object { $_ -like "Gateway config file is not valid JSON: $gatewayConfigPath*" }).Count | Should -Be 1
+  }
+
+  It 'accepts a valid OpenClaw config file' {
+    $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
+    $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
+    $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
+    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
+    $script:testPaths += @($stateDir, $gatewayDir, $gatewayConfigPath, $configPath)
+
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $gatewayDir -Force | Out-Null
+    Set-Content -LiteralPath $gatewayConfigPath -Value (@{ name = 'test' } | ConvertTo-Json -Depth 10) -Encoding UTF8
+
+    $result = Invoke-DoctorJson -ConfigPath $configPath
+
+    $result.exitCode | Should -Be 1
+    (@($result.report.issues) | Where-Object { $_ -like 'Gateway config file*' }).Count | Should -Be 0
+    @($result.report.issues) | Should -Contain "Service '$($result.report.serviceName)' is not installed."
+  }
+}

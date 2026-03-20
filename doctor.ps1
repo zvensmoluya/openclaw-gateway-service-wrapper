@@ -12,11 +12,69 @@ Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1')
 $issues = @()
 
 try {
-  if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-    $ConfigPath = Join-Path $PSScriptRoot 'service-config.json'
+  $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath -AllowInvalidRemembered
+  if ($selection.ContainsKey('invalidReason')) {
+    $service = if ([string]::IsNullOrWhiteSpace($selection.rememberedServiceName)) {
+      @{
+        installed = $false
+        name      = $null
+        status    = $null
+        startType = $null
+        processId = 0
+        startName = $null
+        pathName  = $null
+      }
+    } else {
+      Get-ServiceDetails -ServiceName $selection.rememberedServiceName
+    }
+
+    $report = @{
+      serviceName = $selection.rememberedServiceName
+      config      = @{
+        configSource        = $selection.configSource
+        sourcePath          = $selection.sourcePath
+        rememberedPath      = $selection.rememberedPath
+        serviceAccountMode  = $null
+        stateDir            = $null
+        gatewayConfigPath   = $null
+        tempDir             = $null
+        port                = $null
+        bind                = $null
+      }
+      dependencies = @{
+        openclawCommand = $null
+        winswExecutable = $null
+        winswXml        = $null
+      }
+      service   = $service
+      health    = @{
+        ok         = $false
+        statusCode = $null
+        body       = $null
+        error      = $selection.invalidReason
+      }
+      listeners = @()
+      issues    = @($selection.invalidReason)
+    }
+
+    if ($Json) {
+      $report | ConvertTo-Json -Depth 10
+    } else {
+      Write-Host "Service name      : $($selection.rememberedServiceName)"
+      Write-Host "Config path       : $($selection.sourcePath)"
+      Write-Host "Config source     : $($selection.configSource)"
+      Write-Host "Remembered path   : $($selection.rememberedPath)"
+      Write-Host ''
+      Write-Host 'Issues'
+      Write-Host "- $($selection.invalidReason)"
+    }
+
+    exit 1
   }
 
-  $config = Get-ServiceConfig -ConfigPath $ConfigPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $config.configSource = $selection.configSource
+  $config.rememberedPath = $selection.rememberedPath
   $layout = Get-ServiceArtifactLayout -Config $config
   $service = Get-ServiceDetails -ServiceName $config.serviceName
   $listeners = @(Get-PortListeners -Port $config.port)
@@ -33,9 +91,7 @@ try {
     $issues += "State directory does not exist: $($config.stateDir)"
   }
 
-  if (-not (Test-Path -LiteralPath (Split-Path -Parent $config.gatewayConfigPath))) {
-    $issues += "Gateway config parent directory does not exist: $(Split-Path -Parent $config.gatewayConfigPath)"
-  }
+  $issues += @(Get-GatewayConfigValidationIssues -Config $config)
 
   if (-not $service.installed) {
     $issues += "Service '$($config.serviceName)' is not installed."
@@ -56,7 +112,9 @@ try {
   $report = @{
     serviceName = $config.serviceName
     config      = @{
+      configSource       = $config.configSource
       sourcePath         = $config.sourceConfigPath
+      rememberedPath     = $config.rememberedPath
       serviceAccountMode = $config.serviceAccountMode
       stateDir           = $config.stateDir
       gatewayConfigPath  = $config.gatewayConfigPath
@@ -80,6 +138,8 @@ try {
   } else {
     Write-Host "Service name      : $($config.serviceName)"
     Write-Host "Config path       : $($config.sourceConfigPath)"
+    Write-Host "Config source     : $($config.configSource)"
+    Write-Host "Remembered path   : $($config.rememberedPath)"
     Write-Host "Gateway config    : $($config.gatewayConfigPath)"
     Write-Host "OpenClaw command  : $openclawCommand"
     Write-Host "WinSW executable  : $($layout.generatedExecutablePath)"

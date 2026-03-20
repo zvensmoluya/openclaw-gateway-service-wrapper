@@ -26,6 +26,9 @@ This repository wraps the OpenClaw gateway in a Windows service package. The ups
 
 - The repository default is `service-config.json` at the repo root.
 - Operators can pass `-ConfigPath` to public scripts to target another config file.
+- After a successful install, the wrapper writes `.runtime/active-config.json` so later commands remember the last successful wrapper config path.
+- Public scripts resolve wrapper config in this order: explicit `-ConfigPath`, remembered config, repository default.
+- If remembered config metadata exists but points to a missing file, operational commands fail instead of silently falling back.
 - Config file values override repository defaults from the shared module.
 - Path-like config values support `%USERPROFILE%`, `%HOME%`, `%LOCALAPPDATA%`, `%TEMP%`, `%TMP%`, and `%REPO_ROOT%`.
 - Runtime environment variables are derived from the resolved config and current service identity.

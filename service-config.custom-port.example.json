@@ -1,0 +1,11 @@
+{
+  "serviceName": "OpenClawService19090",
+  "displayName": "OpenClaw Service (19090)",
+  "description": "Runs a second OpenClaw gateway instance on port 19090.",
+  "port": 19090,
+  "stateDir": "%USERPROFILE%\\.openclaw-19090",
+  "configPath": "%USERPROFILE%\\.openclaw-19090\\openclaw.json",
+  "logPolicy": {
+    "mode": "rotate"
+  }
+}

@@ -145,6 +145,15 @@ function Resolve-AbsolutePath {
   return [System.IO.Path]::GetFullPath((Join-Path $BasePath $Path))
 }
 
+function Get-DefaultWrapperConfigPath {
+  return (Join-Path $script:RepoRoot 'service-config.json')
+}
+
+function Get-RememberedConfigMetadataPath {
+  $runtimeRoot = Resolve-AbsolutePath -Path ((Get-DefaultServiceConfig).runtimeStateDir) -BasePath $script:RepoRoot
+  return (Join-Path $runtimeRoot 'active-config.json')
+}
+
 function Get-UserNameLeaf {
   param(
     [Parameter(Mandatory = $true)]
@@ -319,7 +328,7 @@ function Assert-ServiceConfig {
 function Get-ServiceConfig {
   [CmdletBinding()]
   param(
-    [string]$ConfigPath = (Join-Path $script:RepoRoot 'service-config.json'),
+    [string]$ConfigPath = (Get-DefaultWrapperConfigPath),
     [hashtable]$IdentityContext = (Get-ServiceIdentityContext -Mode 'currentUser')
   )
 
@@ -342,6 +351,153 @@ function Get-ServiceConfig {
   $merged.healthUrl = "http://127.0.0.1:$($merged.port)/health"
 
   return $merged
+}
+
+function Read-RememberedServiceConfigSelection {
+  [CmdletBinding()]
+  param()
+
+  $metadataPath = Get-RememberedConfigMetadataPath
+  if (-not (Test-Path -LiteralPath $metadataPath)) {
+    return $null
+  }
+
+  try {
+    $record = ConvertTo-Hashtable -InputObject (Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json)
+  } catch {
+    throw "Remembered config metadata is not valid JSON: $metadataPath. Remove the file or reinstall the service."
+  }
+
+  if ($null -eq $record -or [string]::IsNullOrWhiteSpace($record.sourceConfigPath)) {
+    throw "Remembered config metadata is missing sourceConfigPath: $metadataPath."
+  }
+
+  if ([string]::IsNullOrWhiteSpace($record.serviceName)) {
+    throw "Remembered config metadata is missing serviceName: $metadataPath."
+  }
+
+  $record.sourceConfigPath = Resolve-AbsolutePath -Path $record.sourceConfigPath -BasePath $script:RepoRoot
+  $record.metadataPath = $metadataPath
+  return $record
+}
+
+function Write-RememberedServiceConfigSelection {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SourceConfigPath,
+    [Parameter(Mandatory = $true)]
+    [string]$ServiceName
+  )
+
+  $metadataPath = Get-RememberedConfigMetadataPath
+  Ensure-Directory -Path (Split-Path -Parent $metadataPath)
+
+  $record = @{
+    sourceConfigPath = Resolve-AbsolutePath -Path $SourceConfigPath -BasePath $script:RepoRoot
+    serviceName      = $ServiceName
+    writtenAt        = (Get-Date).ToString('o')
+  }
+
+  Set-Content -LiteralPath $metadataPath -Value ($record | ConvertTo-Json -Depth 10) -Encoding UTF8
+  return $metadataPath
+}
+
+function Clear-RememberedServiceConfigSelection {
+  [CmdletBinding()]
+  param()
+
+  $metadataPath = Get-RememberedConfigMetadataPath
+  if (Test-Path -LiteralPath $metadataPath) {
+    Remove-Item -LiteralPath $metadataPath -Force
+    return $true
+  }
+
+  return $false
+}
+
+function Resolve-ServiceConfigSelection {
+  [CmdletBinding()]
+  param(
+    [string]$ConfigPath,
+    [switch]$AllowInvalidRemembered
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $remembered = $null
+    try {
+      $remembered = Read-RememberedServiceConfigSelection
+    } catch {
+    }
+
+    return @{
+      configSource         = 'explicit'
+      sourcePath           = Resolve-AbsolutePath -Path $ConfigPath -BasePath $script:RepoRoot
+      rememberedPath       = if ($null -ne $remembered) { $remembered.sourceConfigPath } else { $null }
+      rememberedServiceName = if ($null -ne $remembered) { $remembered.serviceName } else { $null }
+    }
+  }
+
+  try {
+    $remembered = Read-RememberedServiceConfigSelection
+  } catch {
+    if ($AllowInvalidRemembered) {
+      return @{
+        configSource         = 'remembered'
+        sourcePath           = $null
+        rememberedPath       = $null
+        rememberedServiceName = $null
+        invalidReason        = $_.Exception.Message
+      }
+    }
+
+    throw
+  }
+
+  if ($null -ne $remembered) {
+    if (-not (Test-Path -LiteralPath $remembered.sourceConfigPath)) {
+      $message = "Remembered config path not found: $($remembered.sourceConfigPath). Pass -ConfigPath explicitly or reinstall the service."
+      if ($AllowInvalidRemembered) {
+        return @{
+          configSource         = 'remembered'
+          sourcePath           = $remembered.sourceConfigPath
+          rememberedPath       = $remembered.sourceConfigPath
+          rememberedServiceName = $remembered.serviceName
+          invalidReason        = $message
+        }
+      }
+
+      throw $message
+    }
+
+    return @{
+      configSource         = 'remembered'
+      sourcePath           = $remembered.sourceConfigPath
+      rememberedPath       = $remembered.sourceConfigPath
+      rememberedServiceName = $remembered.serviceName
+    }
+  }
+
+  return @{
+    configSource         = 'repoDefault'
+    sourcePath           = Get-DefaultWrapperConfigPath
+    rememberedPath       = $null
+    rememberedServiceName = $null
+  }
+}
+
+function Resolve-ServiceConfig {
+  [CmdletBinding()]
+  param(
+    [string]$ConfigPath,
+    [hashtable]$IdentityContext = (Get-ServiceIdentityContext -Mode 'currentUser')
+  )
+
+  $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath
+  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $IdentityContext
+  $config.configSource = $selection.configSource
+  $config.rememberedPath = $selection.rememberedPath
+  return $config
 }
 
 function Get-EffectiveServiceAccountMode {
@@ -758,6 +914,34 @@ function Invoke-HealthCheck {
   }
 }
 
+function Get-GatewayConfigValidationIssues {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $issues = @()
+  $gatewayConfigParent = Split-Path -Parent $Config.gatewayConfigPath
+
+  if (-not (Test-Path -LiteralPath $gatewayConfigParent)) {
+    $issues += "Gateway config parent directory does not exist: $gatewayConfigParent"
+  }
+
+  if (-not (Test-Path -LiteralPath $Config.gatewayConfigPath)) {
+    $issues += "Gateway config file does not exist: $($Config.gatewayConfigPath)"
+    return [string[]]$issues
+  }
+
+  try {
+    Get-Content -LiteralPath $Config.gatewayConfigPath -Raw | ConvertFrom-Json | Out-Null
+  } catch {
+    $issues += "Gateway config file is not valid JSON: $($Config.gatewayConfigPath). $($_.Exception.Message)"
+  }
+
+  return [string[]]$issues
+}
+
 function Read-RunState {
   [CmdletBinding()]
   param(
@@ -895,10 +1079,13 @@ function Remove-GeneratedArtifacts {
 }
 
 Export-ModuleMember -Function `
+  Clear-RememberedServiceConfigSelection, `
   Ensure-Directory, `
   Ensure-WinSWBinary, `
   Get-EffectiveServiceAccountMode, `
+  Get-GatewayConfigValidationIssues, `
   Get-PortListeners, `
+  Get-RememberedConfigMetadataPath, `
   Get-ServiceArtifactLayout, `
   Get-ServiceConfig, `
   Get-ServiceDetails, `
@@ -906,13 +1093,17 @@ Export-ModuleMember -Function `
   Get-WrapperRoot, `
   Invoke-HealthCheck, `
   Invoke-WinSWCommand, `
+  Read-RememberedServiceConfigSelection, `
   Read-RunState, `
   Remove-GeneratedArtifacts, `
   Render-WinSWServiceXml, `
   Resolve-ManagedExecutablePath, `
   Resolve-OpenClawCommandPath, `
+  Resolve-ServiceConfig, `
+  Resolve-ServiceConfigSelection, `
   Stop-RecordedServiceProcessTree, `
   Update-RunState, `
   Wait-ForServiceStatus, `
+  Write-RememberedServiceConfigSelection, `
   Write-RunState, `
   Write-WinSWServiceXml

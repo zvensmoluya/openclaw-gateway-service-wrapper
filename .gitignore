@@ -5,6 +5,7 @@ tools/
 .runtime/
 *.log
 *.tmp
+testResults.xml
 
 # Legacy local artifacts from the pre-repo layout
 OpenClawService.exe

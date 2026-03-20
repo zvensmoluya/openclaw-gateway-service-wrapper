@@ -10,11 +10,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
 
 try {
-  if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-    $ConfigPath = Join-Path $PSScriptRoot 'service-config.json'
-  }
-
-  $config = Get-ServiceConfig -ConfigPath $ConfigPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $config = Resolve-ServiceConfig -ConfigPath $ConfigPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
   $serviceDetails = Get-ServiceDetails -ServiceName $config.serviceName
 
   if ($serviceDetails.installed) {
@@ -37,6 +33,16 @@ try {
 
   if ($PurgeTools) {
     Remove-GeneratedArtifacts -Config $config
+  }
+
+  $remembered = $null
+  try {
+    $remembered = Read-RememberedServiceConfigSelection
+  } catch {
+  }
+
+  if ($null -ne $remembered -and $remembered.serviceName -eq $config.serviceName) {
+    [void](Clear-RememberedServiceConfigSelection)
   }
 
   Write-Host "Service '$($config.serviceName)' has been removed."

@@ -1,5 +1,45 @@
 # 配置参考
 
+## 配置分层
+
+- Wrapper 配置：`service-config.json` 或显式传入的 `-ConfigPath`
+- OpenClaw 配置：wrapper 配置里 `configPath` 指向的文件
+
+Wrapper 配置由本仓库负责，OpenClaw 配置由上游 OpenClaw 负责。本仓库不提供 `openclaw.json` 示例，因为上游 schema 可能独立演进。
+
+## Wrapper 配置解析规则
+
+公开脚本会按下面的优先级选择 wrapper 配置：
+
+1. 显式传入的 `-ConfigPath`
+2. `.runtime/active-config.json` 里 remembered 的配置
+3. 仓库根目录的 `service-config.json`
+
+安装成功后，wrapper 会写入 `.runtime/active-config.json`，固定字段为：
+
+- `sourceConfigPath`
+- `serviceName`
+- `writtenAt`
+
+如果 remembered config 元数据存在，但 `sourceConfigPath` 指向的文件已经不存在：
+
+- `install.ps1`、`start.ps1`、`stop.ps1`、`restart.ps1`、`uninstall.ps1` 会直接失败
+- `status.ps1` 和 `doctor.ps1` 会报告 remembered path 出错，并返回失败
+
+不会再静默回退到仓库默认配置。
+
+## 推荐的本地工作流
+
+- 保留 `service-config.json` 作为仓库默认值
+- 复制 `service-config.local.example.json` 为 `service-config.local.json`
+- 首次安装时执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
+```
+
+之后常用运维脚本就可以省略 `-ConfigPath`，因为 wrapper 已经记住了这份配置。
+
 ## 核心字段
 
 - `serviceName`：Windows 服务名，同时也是 WinSW 产物的基础名
@@ -8,7 +48,7 @@
 - `bind`：传给 `openclaw gateway run --bind` 的值
 - `port`：gateway 监听端口
 - `stateDir`：OpenClaw 状态目录
-- `configPath`：OpenClaw 配置文件路径
+- `configPath`：传给 OpenClaw CLI 的配置文件路径
 - `tempDir`：服务进程使用的临时目录
 - `serviceAccountMode`：`currentUser` 或 `credential`
 - `openclawCommand`：可选，显式指定 OpenClaw CLI 路径或命令名
@@ -33,6 +73,14 @@
 
 `currentUser` 的含义是：按当前调用用户的 profile 解析路径，并在安装时提示输入这个用户的密码。
 
+## 示例配置文件
+
+这些示例文件是 overlay，不是完整清单。没有重复写出的字段会继续使用仓库默认值。
+
+- `service-config.local.example.json`
+- `service-config.credential.example.json`
+- `service-config.custom-port.example.json`
+
 ## 路径占位符
 
 - `%USERPROFILE%`
@@ -42,11 +90,13 @@
 - `%TMP%`
 - `%REPO_ROOT%`
 
-## 示例
+## 完整示例
 
 ```json
 {
   "serviceName": "OpenClawService",
+  "displayName": "OpenClaw Service",
+  "description": "Runs the OpenClaw gateway as a Windows Service.",
   "bind": "loopback",
   "port": 18789,
   "stateDir": "%USERPROFILE%\\.openclaw",
