@@ -31,6 +31,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 仓库默认现在使用 `serviceAccountMode: credential`，所以安装时会提示输入实际要运行服务的 Windows 账户凭据。这个工具是 Windows Service 包装器，不是“跟随当前登录用户环境”的后台代理。
 
+默认情况下，`install.ps1` 还会为当前 Windows 用户注册一个登录后自动出现的 `tray-controller.ps1` 启动项。服务本身仍然作为后台 Windows Service 开机启动，而托盘控制器只会在该用户登录桌面后出现。如果你只想保留服务、不需要托盘入口，可以在安装时传 `-SkipTray`。
+
 4. 检查状态和健康：
 
 ```powershell
@@ -52,6 +54,15 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 本仓库不提供 `openclaw.json` 示例，因为它的 schema 属于上游 OpenClaw。
 
 安装成功后，wrapper 会把实际使用的 wrapper 配置路径写入 `.runtime/active-config.json`。之后的 `start.ps1`、`stop.ps1`、`restart.ps1`、`status.ps1`、`doctor.ps1`、`uninstall.ps1` 默认都会沿用这份 remembered config，除非你显式传入 `-ConfigPath`。
+
+## 托盘控制器
+
+- `tray-controller.ps1` 是会话级 companion，不是对 Windows Service 的替代。
+- 服务可以在开机后、用户登录前就已经运行；托盘图标会在安装它的那个用户登录后出现。
+- 托盘菜单提供 `Start`、`Stop`、`Restart`、`Refresh`、`Exit Tray`。
+- `Stop` 只会停止服务，不会把服务启动类型改成禁用。
+- `Exit Tray` 只会关闭当前登录会话里的托盘图标，不会停止服务。
+- 托盘里的服务控制动作会先请求 UAC 提权，再通过 `invoke-tray-action.ps1` 调用现有生命周期脚本。
 
 ## Wrapper 配置示例
 

@@ -16,6 +16,12 @@ Install with an explicit wrapper config:
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
+Skip tray registration for the current Windows user:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -SkipTray
+```
+
 Install with credentials:
 
 ```powershell
@@ -28,6 +34,8 @@ If you intentionally use the deprecated `currentUser` alias, `install.ps1` promp
 If you use `serviceAccountMode: localSystem`, do not pass `-Credential`. That combination is rejected before installation so the wrapper cannot accidentally install the service under the explicit credential instead of `LocalSystem`.
 
 After a successful install, the wrapper remembers the wrapper config path in `.runtime/active-config.json`.
+
+By default, install also creates a Startup shortcut for `tray-controller.ps1` in the current Windows user's Startup folder. The Windows Service and the tray controller are separate layers: the service is machine background infrastructure, while the tray icon is a per-sign-in control surface.
 
 ## Start, Stop, Restart
 
@@ -44,6 +52,24 @@ To override the remembered config for a single command, pass `-ConfigPath` expli
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\status.ps1 -ConfigPath .\service-config.local.json
 ```
+
+## Tray Controller
+
+After the installing user signs in, `tray-controller.ps1` appears in the Windows notification area without showing a console window.
+
+The tray menu provides:
+
+- `Start`
+- `Stop`
+- `Restart`
+- `Refresh`
+- `Exit Tray`
+
+Behavior notes:
+
+- `Stop` only stops the service. It does not switch the service to `Disabled`.
+- `Exit Tray` only closes the tray controller for the current sign-in session. It does not stop the service.
+- Tray actions prompt for UAC elevation and then invoke `invoke-tray-action.ps1`, which in turn calls the existing `start.ps1`, `stop.ps1`, or `restart.ps1` scripts.
 
 ## Status and Diagnostics
 

@@ -2,7 +2,8 @@
 param(
   [string]$ConfigPath,
   [pscredential]$Credential,
-  [switch]$Force
+  [switch]$Force,
+  [switch]$SkipTray
 )
 
 Set-StrictMode -Version Latest
@@ -88,6 +89,17 @@ try {
 
   Write-RememberedServiceConfigSelection -SourceConfigPath $config.sourceConfigPath -ServiceName $config.serviceName | Out-Null
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
+  $trayStatus = 'Skipped'
+
+  if (-not $SkipTray) {
+    try {
+      $trayShortcutPath = Install-TrayStartupShortcut -Config $config
+      $trayStatus = "Registered ($trayShortcutPath)"
+    } catch {
+      $trayStatus = "Failed ($($_.Exception.Message))"
+      Write-Warning "Tray startup shortcut registration failed: $($_.Exception.Message)"
+    }
+  }
 
   Write-Host ''
   Write-Host "Service name : $($config.serviceName)"
@@ -96,6 +108,7 @@ try {
   Write-Host "Port         : $($config.port)"
   Write-Host "WinSW home   : $($layout.generatedDirectory)"
   Write-Host "Health URL   : $($config.healthUrl)"
+  Write-Host "Tray startup : $trayStatus"
   if ($health.ok) {
     Write-Host "Health       : OK ($($health.statusCode))"
   } else {

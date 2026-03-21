@@ -154,6 +154,70 @@ function Get-RememberedConfigMetadataPath {
   return (Join-Path $runtimeRoot 'active-config.json')
 }
 
+function Get-WindowsPowerShellExecutablePath {
+  [CmdletBinding()]
+  param()
+
+  $command = Get-Command -Name 'powershell.exe' -CommandType Application -ErrorAction SilentlyContinue
+  if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+    return $command.Source
+  }
+
+  return (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
+}
+
+function Get-CurrentUserStartupDirectory {
+  [CmdletBinding()]
+  param()
+
+  $startupDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::Startup)
+  if ([string]::IsNullOrWhiteSpace($startupDirectory)) {
+    throw 'Could not resolve the current user Startup folder.'
+  }
+
+  return $startupDirectory
+}
+
+function Get-TrayShortcutPath {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [string]$StartupDirectory = (Get-CurrentUserStartupDirectory)
+  )
+
+  return (Join-Path $StartupDirectory "$($Config.serviceName) Tray Controller.lnk")
+}
+
+function Get-TrayControllerLaunchArguments {
+  [CmdletBinding()]
+  param(
+    [string]$ScriptPath = (Join-Path $script:RepoRoot 'tray-controller.ps1'),
+    [string]$ConfigPath
+  )
+
+  $resolvedScriptPath = Resolve-AbsolutePath -Path $ScriptPath -BasePath $script:RepoRoot
+  $arguments = @(
+    '-NoProfile',
+    '-WindowStyle',
+    'Hidden',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    ('"{0}"' -f $resolvedScriptPath)
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $resolvedConfigPath = Resolve-AbsolutePath -Path $ConfigPath -BasePath $script:RepoRoot
+    $arguments += @(
+      '-ConfigPath',
+      ('"{0}"' -f $resolvedConfigPath)
+    )
+  }
+
+  return ($arguments -join ' ')
+}
+
 function Get-UserNameLeaf {
   param(
     [Parameter(Mandatory = $true)]
@@ -802,6 +866,58 @@ function Ensure-Directory {
   if (-not (Test-Path -LiteralPath $Path)) {
     [void](New-Item -ItemType Directory -Path $Path -Force)
   }
+}
+
+function Install-TrayStartupShortcut {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [string]$ConfigPath,
+    [string]$StartupDirectory = (Get-CurrentUserStartupDirectory)
+  )
+
+  Ensure-Directory -Path $StartupDirectory
+
+  $shortcutPath = Get-TrayShortcutPath -Config $Config -StartupDirectory $StartupDirectory
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $null
+  try {
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = Get-WindowsPowerShellExecutablePath
+    $shortcut.Arguments = Get-TrayControllerLaunchArguments -ConfigPath $ConfigPath
+    $shortcut.WorkingDirectory = $script:RepoRoot
+    $shortcut.Description = "Open the $($Config.displayName) tray controller."
+    $shortcut.IconLocation = "$([System.Environment]::SystemDirectory)\shell32.dll,44"
+    $shortcut.Save()
+  } finally {
+    if ($null -ne $shortcut) {
+      [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut)
+    }
+
+    if ($null -ne $shell) {
+      [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+  }
+
+  return $shortcutPath
+}
+
+function Remove-TrayStartupShortcut {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [string]$StartupDirectory = (Get-CurrentUserStartupDirectory)
+  )
+
+  $shortcutPath = Get-TrayShortcutPath -Config $Config -StartupDirectory $StartupDirectory
+  if (Test-Path -LiteralPath $shortcutPath) {
+    Remove-Item -LiteralPath $shortcutPath -Force
+    return $true
+  }
+
+  return $false
 }
 
 function Get-ServiceArtifactLayout {
@@ -1575,6 +1691,8 @@ function Remove-GeneratedArtifacts {
 Export-ModuleMember -Function `
   Clear-RememberedServiceConfigSelection, `
   Get-CurrentWindowsIdentityName, `
+  Get-TrayControllerLaunchArguments, `
+  Get-TrayShortcutPath, `
   Ensure-Directory, `
   Ensure-WinSWBinary, `
   Get-EffectiveServiceAccountMode, `
@@ -1596,9 +1714,11 @@ Export-ModuleMember -Function `
   Get-WrapperRoot, `
   Invoke-HealthCheck, `
   Invoke-WinSWCommand, `
+  Install-TrayStartupShortcut, `
   Read-RememberedServiceConfigSelection, `
   Read-RunState, `
   Remove-GeneratedArtifacts, `
+  Remove-TrayStartupShortcut, `
   Render-WinSWServiceXml, `
   Resolve-ManagedExecutablePath, `
   Resolve-OpenClawCommandPath, `

@@ -16,6 +16,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
+跳过当前用户的托盘启动项注册：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -SkipTray
+```
+
 带凭据安装：
 
 ```powershell
@@ -26,6 +32,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 如果你刻意使用已弃用的 `currentUser` 别名，`install.ps1` 会提示输入当前 Windows 用户的密码，并把服务安装到同一个账户下。
 
 安装成功后，wrapper 会把实际使用的 wrapper 配置路径记到 `.runtime/active-config.json`。
+
+默认情况下，安装还会在当前 Windows 用户的 Startup 文件夹里创建 `tray-controller.ps1` 的启动快捷方式。Windows Service 和托盘控制器是两层不同的东西：前者是机器级后台服务，后者是登录会话里的控制入口。
 
 ## 启动、停止、重启
 
@@ -42,6 +50,24 @@ powershell -ExecutionPolicy Bypass -File .\restart.ps1
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\status.ps1 -ConfigPath .\service-config.local.json
 ```
+
+## 托盘控制器
+
+安装它的用户登录后，`tray-controller.ps1` 会以无黑窗的方式出现在 Windows 通知区域。
+
+托盘菜单提供：
+
+- `Start`
+- `Stop`
+- `Restart`
+- `Refresh`
+- `Exit Tray`
+
+行为说明：
+
+- `Stop` 只会停止服务，不会把服务启动类型切到 `Disabled`。
+- `Exit Tray` 只会关闭当前登录会话里的托盘控制器，不会停止服务。
+- 托盘动作会先请求 UAC 提权，然后通过 `invoke-tray-action.ps1` 再调用现有的 `start.ps1`、`stop.ps1`、`restart.ps1`。
 
 ## 状态与诊断
 

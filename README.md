@@ -31,6 +31,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 The repository default now uses `serviceAccountMode: credential`, so installation prompts for the Windows account that should own the service. This wrapper is a Windows Service package, not a "follow the currently logged-in user" agent. If you cannot or do not want to use a password-backed Windows user account for the service, use `serviceAccountMode: localSystem` with explicit absolute paths to the desired OpenClaw files.
 
+By default, `install.ps1` also registers a per-user Startup shortcut for `tray-controller.ps1`. The service still starts with Windows as a background service, while the tray controller appears only after that user signs in. Use `-SkipTray` if you want the service without the tray companion.
+
 4. Check health:
 
 ```powershell
@@ -52,6 +54,15 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 This repository does not ship an `openclaw.json` example because that schema belongs to upstream OpenClaw.
 
 After a successful install, the wrapper remembers the wrapper config path in `.runtime/active-config.json`. Later `start.ps1`, `stop.ps1`, `restart.ps1`, `status.ps1`, `doctor.ps1`, and `uninstall.ps1` commands reuse that remembered path unless you pass `-ConfigPath` explicitly.
+
+## Tray Controller
+
+- `tray-controller.ps1` is a session-level companion, not a replacement for the Windows Service.
+- The service can start at boot even before anyone signs in; the tray icon appears after the installing user signs in.
+- The tray menu provides `Start`, `Stop`, `Restart`, `Refresh`, and `Exit Tray`.
+- `Stop` only stops the service for now. It does not change the service start mode.
+- `Exit Tray` closes only the tray icon for the current sign-in session. It does not stop the service.
+- Service control actions from the tray use UAC elevation and then call the existing lifecycle scripts through `invoke-tray-action.ps1`.
 
 ## Example Wrapper Configs
 
