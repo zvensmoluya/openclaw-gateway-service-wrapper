@@ -2250,6 +2250,318 @@ function Remove-GeneratedArtifacts {
   }
 }
 
+function Get-TrayControllerPaths {
+  [CmdletBinding()]
+  param(
+    [hashtable]$Config,
+    [string]$ServiceName,
+    [string]$RuntimeStateDirectory,
+    [string]$LogsDirectory
+  )
+
+  $defaultConfig = Get-DefaultServiceConfig
+  $resolvedServiceName = if ($null -ne $Config -and -not [string]::IsNullOrWhiteSpace($Config.serviceName)) {
+    $Config.serviceName
+  } elseif (-not [string]::IsNullOrWhiteSpace($ServiceName)) {
+    $ServiceName
+  } else {
+    $defaultConfig.serviceName
+  }
+
+  $resolvedRuntimeStateDirectory = if ($null -ne $Config -and -not [string]::IsNullOrWhiteSpace($Config.runtimeStateDirectory)) {
+    Resolve-AbsolutePath -Path $Config.runtimeStateDirectory -BasePath $script:RepoRoot
+  } elseif (-not [string]::IsNullOrWhiteSpace($RuntimeStateDirectory)) {
+    Resolve-AbsolutePath -Path $RuntimeStateDirectory -BasePath $script:RepoRoot
+  } else {
+    Resolve-AbsolutePath -Path $defaultConfig.runtimeStateDir -BasePath $script:RepoRoot
+  }
+
+  $resolvedLogsDirectory = if ($null -ne $Config -and -not [string]::IsNullOrWhiteSpace($Config.logsDirectory)) {
+    Resolve-AbsolutePath -Path $Config.logsDirectory -BasePath $script:RepoRoot
+  } elseif (-not [string]::IsNullOrWhiteSpace($LogsDirectory)) {
+    Resolve-AbsolutePath -Path $LogsDirectory -BasePath $script:RepoRoot
+  } else {
+    Resolve-AbsolutePath -Path $defaultConfig.logsDir -BasePath $script:RepoRoot
+  }
+
+  return @{
+    serviceName           = $resolvedServiceName
+    runtimeStateDirectory = $resolvedRuntimeStateDirectory
+    logsDirectory         = $resolvedLogsDirectory
+    cachePath             = Join-Path $resolvedRuntimeStateDirectory "$resolvedServiceName.tray-state.json"
+    logPath               = Join-Path $resolvedLogsDirectory "$resolvedServiceName.tray.log"
+  }
+}
+
+function Resolve-TrayControllerContext {
+  [CmdletBinding()]
+  param(
+    [string]$ConfigPath,
+    [string]$CurrentWindowsIdentityName = (Get-CurrentWindowsIdentityName),
+    [switch]$AllowInvalidRemembered
+  )
+
+  $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath -AllowInvalidRemembered:$AllowInvalidRemembered
+  $context = @{
+    selection                 = $selection
+    bootstrapConfig           = $null
+    config                    = $null
+    service                   = $null
+    inspectionIdentityContext = $null
+    paths                     = Get-TrayControllerPaths -ServiceName $selection.rememberedServiceName
+    serviceName               = $null
+  }
+  $context.serviceName = $context.paths.serviceName
+
+  if ($selection.ContainsKey('invalidReason') -or [string]::IsNullOrWhiteSpace($selection.sourcePath)) {
+    return $context
+  }
+
+  $bootstrapConfig = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+  $service = Get-ServiceDetails -ServiceName $bootstrapConfig.serviceName
+  $inspectionIdentityContext = Resolve-InspectionIdentityContext -Config $bootstrapConfig -ServiceDetails $service -CurrentWindowsIdentityName $CurrentWindowsIdentityName
+  $config = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $inspectionIdentityContext
+  $config.configSource = $selection.configSource
+  $config.rememberedPath = $selection.rememberedPath
+
+  $context.bootstrapConfig = $bootstrapConfig
+  $context.config = $config
+  $context.service = $service
+  $context.inspectionIdentityContext = $inspectionIdentityContext
+  $context.paths = Get-TrayControllerPaths -Config $config
+  $context.serviceName = $config.serviceName
+
+  return $context
+}
+
+function Read-TrayStateCache {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$CachePath
+  )
+
+  if (-not (Test-Path -LiteralPath $CachePath)) {
+    return $null
+  }
+
+  $text = Get-Content -LiteralPath $CachePath -Raw
+  if ([string]::IsNullOrWhiteSpace($text)) {
+    return $null
+  }
+
+  return (ConvertTo-Hashtable -InputObject ($text | ConvertFrom-Json))
+}
+
+function Write-TrayStateCache {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$CachePath,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Snapshot
+  )
+
+  Ensure-Directory -Path (Split-Path -Parent $CachePath)
+  Set-Content -LiteralPath $CachePath -Value ($Snapshot | ConvertTo-Json -Depth 10) -Encoding UTF8
+  return $CachePath
+}
+
+function New-TrayStatusSnapshot {
+  [CmdletBinding()]
+  param(
+    [string]$ServiceName,
+    [bool]$Installed,
+    $Service,
+    $Health,
+    [AllowEmptyCollection()]
+    [string[]]$Issues = @(),
+    [AllowEmptyCollection()]
+    [string[]]$Warnings = @(),
+    [ValidateSet('fast', 'deep')]
+    [string]$RefreshKind = 'deep',
+    [datetime]$ObservedAt = (Get-Date),
+    [string]$ConfigSource,
+    [string]$ConfigPath,
+    [string]$RememberedPath,
+    [switch]$IsStale,
+    [string]$StaleReason,
+    [string]$LastDeepObservedAt,
+    [string]$HealthObservedAt,
+    [string]$ErrorMessage
+  )
+
+  $resolvedServiceName = if ([string]::IsNullOrWhiteSpace($ServiceName)) { 'OpenClaw' } else { $ServiceName }
+  $serviceTable = ConvertTo-Hashtable -InputObject $Service
+  if ($null -eq $serviceTable) {
+    $serviceTable = @{}
+  }
+
+  $healthTable = ConvertTo-Hashtable -InputObject $Health
+  if ($null -eq $healthTable) {
+    $healthTable = @{}
+  }
+
+  $issueList = @($Issues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $warningList = @($Warnings | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $serviceStatus = if ($serviceTable.ContainsKey('status') -and -not [string]::IsNullOrWhiteSpace("$($serviceTable.status)")) {
+    "$($serviceTable.status)"
+  } else {
+    $null
+  }
+  $hasHealthData = $healthTable.ContainsKey('ok') -and $null -ne $healthTable.ok
+  $isHealthy = $hasHealthData -and [bool]$healthTable.ok
+  $issueSummary = if ($issueList.Count -gt 0) { $issueList[0] } else { $null }
+  $warningSummary = if ($warningList.Count -gt 0) { $warningList[0] } else { $null }
+  $observedAtIso = $ObservedAt.ToString('o')
+  $resolvedLastDeepObservedAt = if ([string]::IsNullOrWhiteSpace($LastDeepObservedAt) -and $RefreshKind -eq 'deep') {
+    $observedAtIso
+  } else {
+    $LastDeepObservedAt
+  }
+  $resolvedHealthObservedAt = if ([string]::IsNullOrWhiteSpace($HealthObservedAt) -and $hasHealthData -and $RefreshKind -eq 'deep') {
+    $observedAtIso
+  } else {
+    $HealthObservedAt
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
+    $summary = if ($ErrorMessage -like 'Remembered config path not found:*') { 'Config error' } else { 'Status unavailable' }
+    $detail = $ErrorMessage
+    $state = 'error'
+  } elseif (-not $Installed) {
+    $summary = 'Not installed'
+    $detail = "$resolvedServiceName is not installed."
+    $state = 'notInstalled'
+  } elseif ($serviceStatus -ne 'Running') {
+    $summary = 'Stopped'
+    $detail = "$resolvedServiceName is installed but not running."
+    $state = 'stopped'
+  } elseif (-not $hasHealthData) {
+    $summary = 'Refreshing...'
+    $detail = 'Waiting for a deep refresh.'
+    $state = 'loading'
+  } elseif (-not $isHealthy) {
+    $summary = 'Running with issues'
+    $detail = if (-not [string]::IsNullOrWhiteSpace("$($healthTable.error)")) { "$($healthTable.error)" } else { "$resolvedServiceName is running but unhealthy." }
+    $state = 'unhealthy'
+  } elseif ($issueList.Count -gt 0) {
+    $summary = 'Running with attention needed'
+    $detail = $issueSummary
+    $state = 'degraded'
+  } else {
+    $summary = 'Running'
+    $detail = "$resolvedServiceName is healthy."
+    $state = 'healthy'
+  }
+
+  if ($IsStale) {
+    if ([string]::IsNullOrWhiteSpace($StaleReason)) {
+      $StaleReason = 'Showing the last known tray status while a refresh is pending.'
+    }
+
+    $detail = if ([string]::IsNullOrWhiteSpace($detail)) { $StaleReason } else { "$detail Stale: $StaleReason" }
+  }
+
+  $canStart = $Installed -and $serviceStatus -ne 'Running' -and [string]::IsNullOrWhiteSpace($ErrorMessage)
+  $canStop = $Installed -and $serviceStatus -eq 'Running' -and [string]::IsNullOrWhiteSpace($ErrorMessage)
+  $canRestart = $canStop
+  $tooltipText = "${resolvedServiceName}: $summary"
+  if ($IsStale) {
+    $tooltipText = "$tooltipText (stale)"
+  }
+
+  return @{
+    serviceName         = $resolvedServiceName
+    observedAt          = $observedAtIso
+    refreshKind         = $RefreshKind
+    lastDeepObservedAt  = $resolvedLastDeepObservedAt
+    state               = $state
+    summary             = $summary
+    detail              = $detail
+    tooltipText         = $tooltipText
+    stale               = [bool]$IsStale
+    staleReason         = $StaleReason
+    config              = @{
+      configSource   = $ConfigSource
+      sourcePath     = $ConfigPath
+      rememberedPath = $RememberedPath
+    }
+    service             = @{
+      installed = $Installed
+      status    = $serviceStatus
+      name      = if ($serviceTable.ContainsKey('name')) { $serviceTable.name } else { $resolvedServiceName }
+      startType = if ($serviceTable.ContainsKey('startType')) { $serviceTable.startType } else { $null }
+    }
+    health              = @{
+      ok         = if ($hasHealthData) { [bool]$healthTable.ok } else { $null }
+      statusCode = if ($healthTable.ContainsKey('statusCode')) { $healthTable.statusCode } else { $null }
+      body       = if ($healthTable.ContainsKey('body')) { $healthTable.body } else { $null }
+      error      = if ($healthTable.ContainsKey('error')) { $healthTable.error } else { $null }
+      observedAt = $resolvedHealthObservedAt
+      source     = if ($hasHealthData) {
+        if ($RefreshKind -eq 'deep') { 'live' } else { 'cache' }
+      } else {
+        'none'
+      }
+    }
+    actions             = @{
+      canStart   = $canStart
+      canStop    = $canStop
+      canRestart = $canRestart
+    }
+    issues              = $issueList
+    warnings            = $warningList
+    issuesSummary       = $issueSummary
+    warningsSummary     = $warningSummary
+    summaryLine         = if ($issueList.Count -gt 0) {
+      $issueSummary
+    } elseif ($warningList.Count -gt 0) {
+      $warningSummary
+    } elseif ($state -eq 'loading') {
+      'Refreshing tray status in the background.'
+    } else {
+      $detail
+    }
+  }
+}
+
+function Set-TrayStatusSnapshotStale {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Snapshot,
+    [string]$Reason,
+    [ValidateSet('fast', 'deep')]
+    [string]$RefreshKind = 'deep',
+    [datetime]$ObservedAt = (Get-Date)
+  )
+
+  $updated = Copy-Hashtable -InputObject $Snapshot
+  $updated.observedAt = $ObservedAt.ToString('o')
+  $updated.refreshKind = $RefreshKind
+  $updated.stale = $true
+  $updated.staleReason = if ([string]::IsNullOrWhiteSpace($Reason)) {
+    'Showing the last known tray status while a refresh is pending.'
+  } else {
+    $Reason
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace("$($updated.detail)")) {
+    if ("$($updated.detail)" -notlike '*Stale:*') {
+      $updated.detail = "$($updated.detail) Stale: $($updated.staleReason)"
+    }
+  } else {
+    $updated.detail = $updated.staleReason
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace("$($updated.tooltipText)") -and "$($updated.tooltipText)" -notlike '*(stale)') {
+    $updated.tooltipText = "$($updated.tooltipText) (stale)"
+  }
+
+  return $updated
+}
+
 Export-ModuleMember -Function `
   Clear-RememberedServiceConfigSelection, `
   Get-CurrentWindowsIdentityName, `
@@ -2268,6 +2580,8 @@ Export-ModuleMember -Function `
   Get-GatewayConfigValidationIssues, `
   Get-PortListeners, `
   Get-RememberedConfigMetadataPath, `
+  Get-TrayControllerPaths, `
+  New-TrayStatusSnapshot, `
   Get-ExpectedServiceStartName, `
   Get-ServiceAccountIdentityContext, `
   Get-ServiceArtifactLayout, `
@@ -2279,6 +2593,8 @@ Export-ModuleMember -Function `
   Get-ServiceInstallValidationIssues, `
   Get-ServiceInstallLayout, `
   Get-ServiceInstallLayoutFromExecutablePath, `
+  Read-TrayStateCache, `
+  Resolve-TrayControllerContext, `
   Get-WinSWServiceAccountInfo, `
   Get-WrapperRoot, `
   Invoke-HealthCheck, `
@@ -2298,12 +2614,14 @@ Export-ModuleMember -Function `
   Resolve-ServiceConfigSelection, `
   Resolve-WrapperProxyEnvironmentPlan, `
   Resolve-InspectionIdentityContext, `
+  Set-TrayStatusSnapshotStale, `
   Set-WrapperProxyEnvironment, `
   Stop-RecordedServiceProcessTree, `
   Test-IsBuiltInServiceAccount, `
   Test-ServiceAccountMatch, `
   Update-RunState, `
   Wait-ForServiceStatus, `
+  Write-TrayStateCache, `
   Write-RememberedServiceConfigSelection, `
   Write-RunState, `
   Write-WinSWServiceXml

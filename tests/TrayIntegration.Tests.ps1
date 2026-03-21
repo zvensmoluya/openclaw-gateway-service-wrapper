@@ -20,4 +20,12 @@ Describe 'tray integration wiring' {
     $script:buildReleaseScriptText | Should -Match 'invoke-tray-action\.ps1'
     $script:buildReleaseScriptText | Should -Match 'tray-controller\.ps1'
   }
+
+  It 'keeps tray snapshot support in status.ps1' {
+    $statusScriptText = Get-Content (Join-Path $script:repoRoot 'status.ps1') -Raw
+
+    $statusScriptText | Should -Match '\[switch\]\$TraySnapshot'
+    $statusScriptText | Should -Match 'RefreshKind'
+    $statusScriptText | Should -Match 'Write-TrayStateCache'
+  }
 }

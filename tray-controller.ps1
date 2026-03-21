@@ -11,6 +11,48 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
+
+function ConvertTo-PlainHashtable {
+  param(
+    [AllowNull()]
+    $InputObject
+  )
+
+  if ($null -eq $InputObject) {
+    return $null
+  }
+
+  if ($InputObject -is [System.Collections.IDictionary]) {
+    $table = @{}
+    foreach ($key in $InputObject.Keys) {
+      $table[$key] = ConvertTo-PlainHashtable -InputObject $InputObject[$key]
+    }
+
+    return $table
+  }
+
+  if ($InputObject -is [pscustomobject]) {
+    $table = @{}
+    foreach ($property in $InputObject.PSObject.Properties) {
+      $table[$property.Name] = ConvertTo-PlainHashtable -InputObject $property.Value
+    }
+
+    return $table
+  }
+
+  if (($InputObject -is [System.Collections.IEnumerable]) -and -not ($InputObject -is [string])) {
+    $items = @()
+    foreach ($item in $InputObject) {
+      $items += ,(ConvertTo-PlainHashtable -InputObject $item)
+    }
+
+    return $items
+  }
+
+  return $InputObject
+}
+
 function Get-WindowsPowerShellExecutablePath {
   $command = Get-Command -Name 'powershell.exe' -CommandType Application -ErrorAction SilentlyContinue
   if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
@@ -38,25 +80,6 @@ function ConvertTo-ArgumentString {
   return ($quoted -join ' ')
 }
 
-function Test-IsRememberedConfigError {
-  param(
-    [AllowNull()]
-    $Report
-  )
-
-  if ($null -eq $Report) {
-    return $false
-  }
-
-  foreach ($issue in @($Report.issues)) {
-    if ("$issue" -like 'Remembered config path not found:*') {
-      return $true
-    }
-  }
-
-  return $false
-}
-
 function Get-TrayStateFromStatusReport {
   param(
     [AllowNull()]
@@ -65,112 +88,162 @@ function Get-TrayStateFromStatusReport {
     [string]$ErrorMessage
   )
 
-  if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
-    return @{
-      state       = 'error'
-      summary     = 'Status unavailable'
-      detail      = $ErrorMessage
-      tooltipText = 'OpenClaw tray: status unavailable'
-      canStart    = $false
-      canStop     = $false
-      canRestart  = $false
-    }
-  }
-
   if ($null -eq $Report) {
-    return @{
-      state       = 'error'
-      summary     = 'Status unavailable'
-      detail      = 'No status report was returned.'
-      tooltipText = 'OpenClaw tray: status unavailable'
-      canStart    = $false
-      canStop     = $false
-      canRestart  = $false
+    $resolvedErrorMessage = if ([string]::IsNullOrWhiteSpace($ErrorMessage)) { 'No status report was returned.' } else { $ErrorMessage }
+    $snapshot = New-TrayStatusSnapshot -ServiceName 'OpenClaw' -Installed $false -Service $null -Health $null -RefreshKind 'deep' -ErrorMessage $resolvedErrorMessage
+  } else {
+    $reportTable = ConvertTo-PlainHashtable -InputObject $Report
+    $config = if ($null -ne $reportTable -and $reportTable.ContainsKey('config')) { $reportTable.config } else { @{} }
+    $warnings = if ($null -ne $reportTable -and $reportTable.ContainsKey('warnings')) { @($reportTable.warnings) } else { @() }
+    $issues = if ($null -ne $reportTable -and $reportTable.ContainsKey('issues')) { @($reportTable.issues) } else { @() }
+    $configSource = if ($config.ContainsKey('configSource')) { $config.configSource } else { $null }
+    $configPathValue = if ($config.ContainsKey('sourcePath')) { $config.sourcePath } else { $null }
+    $rememberedPath = if ($config.ContainsKey('rememberedPath')) { $config.rememberedPath } else { $null }
+    $resolvedErrorMessage = $ErrorMessage
+    if ([string]::IsNullOrWhiteSpace($resolvedErrorMessage)) {
+      $resolvedErrorMessage = $issues | Where-Object { "$_" -like 'Remembered config path not found:*' } | Select-Object -First 1
     }
+    $snapshot = New-TrayStatusSnapshot `
+      -ServiceName "$($reportTable.serviceName)" `
+      -Installed ([bool]$reportTable.installed) `
+      -Service $reportTable.service `
+      -Health $reportTable.health `
+      -Issues $issues `
+      -Warnings $warnings `
+      -RefreshKind 'deep' `
+      -ConfigSource $configSource `
+      -ConfigPath $configPathValue `
+      -RememberedPath $rememberedPath `
+      -ErrorMessage $resolvedErrorMessage
   }
 
-  if (Test-IsRememberedConfigError -Report $Report) {
-    return @{
-      state       = 'error'
-      summary     = 'Config error'
-      detail      = "$($Report.health.error)"
-      tooltipText = 'OpenClaw tray: config error'
-      canStart    = $false
-      canStop     = $false
-      canRestart  = $false
-    }
-  }
+  $snapshot.canStart = [bool]$snapshot.actions.canStart
+  $snapshot.canStop = [bool]$snapshot.actions.canStop
+  $snapshot.canRestart = [bool]$snapshot.actions.canRestart
+  return $snapshot
+}
 
-  $serviceStatus = if ($null -ne $Report.service) { "$($Report.service.status)" } else { '' }
-  $installed = [bool]$Report.installed
-  $healthOk = ($null -ne $Report.health) -and [bool]$Report.health.ok
-  $serviceName = if ([string]::IsNullOrWhiteSpace("$($Report.serviceName)")) { 'OpenClaw' } else { "$($Report.serviceName)" }
-
-  if ($installed -and $serviceStatus -eq 'Running' -and $healthOk) {
-    return @{
-      state       = 'healthy'
-      summary     = 'Running'
-      detail      = "$serviceName is healthy."
-      tooltipText = "${serviceName}: Running"
-      canStart    = $false
-      canStop     = $true
-      canRestart  = $true
-    }
-  }
-
-  if ($installed -and $serviceStatus -eq 'Running' -and -not $healthOk) {
-    $detail = if (-not [string]::IsNullOrWhiteSpace("$($Report.health.error)")) {
-      "$($Report.health.error)"
-    } else {
-      "$serviceName is running but unhealthy."
-    }
-
-    return @{
-      state       = 'unhealthy'
-      summary     = 'Running with issues'
-      detail      = $detail
-      tooltipText = "${serviceName}: Unhealthy"
-      canStart    = $false
-      canStop     = $true
-      canRestart  = $true
-    }
-  }
-
-  if ($installed -and $serviceStatus -ne 'Running') {
-    return @{
-      state       = 'stopped'
-      summary     = 'Stopped'
-      detail      = "$serviceName is installed but not running."
-      tooltipText = "${serviceName}: Stopped"
-      canStart    = $true
-      canStop     = $false
-      canRestart  = $false
-    }
-  }
+function New-LoadingTraySnapshot {
+  param(
+    [string]$ServiceName = 'OpenClaw'
+  )
 
   return @{
-    state       = 'stopped'
-    summary     = 'Not installed'
-    detail      = "$serviceName is not installed."
-    tooltipText = "${serviceName}: Not installed"
-    canStart    = $false
-    canStop     = $false
-    canRestart  = $false
+    serviceName        = $ServiceName
+    observedAt         = (Get-Date).ToString('o')
+    refreshKind        = 'fast'
+    lastDeepObservedAt = $null
+    state              = 'loading'
+    summary            = 'Starting...'
+    detail             = 'Tray controller is starting.'
+    tooltipText        = "${ServiceName}: Starting..."
+    stale              = $false
+    staleReason        = $null
+    config             = @{
+      configSource   = $null
+      sourcePath     = $null
+      rememberedPath = $null
+    }
+    service            = @{
+      installed = $false
+      status    = $null
+      name      = $ServiceName
+      startType = $null
+    }
+    health             = @{
+      ok         = $null
+      statusCode = $null
+      body       = $null
+      error      = $null
+      observedAt = $null
+      source     = 'none'
+    }
+    actions            = @{
+      canStart   = $false
+      canStop    = $false
+      canRestart = $false
+    }
+    issues             = @()
+    warnings           = @()
+    issuesSummary      = $null
+    warningsSummary    = $null
+    summaryLine        = 'Refreshing tray status in the background.'
   }
 }
 
-function Get-NotifyIconForState {
+function ConvertFrom-IsoDateTime {
   param(
-    [Parameter(Mandatory = $true)]
-    [string]$State
+    [string]$Value
   )
 
-  switch ($State) {
-    'healthy' { return [System.Drawing.SystemIcons]::Information }
-    'unhealthy' { return [System.Drawing.SystemIcons]::Warning }
-    'stopped' { return [System.Drawing.SystemIcons]::Application }
-    default { return [System.Drawing.SystemIcons]::Error }
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $null
   }
+
+  $parsed = [DateTime]::MinValue
+  if ([DateTime]::TryParse($Value, [ref]$parsed)) {
+    return $parsed
+  }
+
+  return $null
+}
+
+function Get-TrayInstanceMutexName {
+  param(
+    [string]$ServiceName
+  )
+
+  $resolvedServiceName = if ([string]::IsNullOrWhiteSpace($ServiceName)) { 'OpenClawService' } else { $ServiceName }
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($resolvedServiceName.ToLowerInvariant())
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $hash = [System.BitConverter]::ToString($algorithm.ComputeHash($bytes)).Replace('-', '')
+  } finally {
+    $algorithm.Dispose()
+  }
+
+  return "Local\OpenClaw.Tray.$hash"
+}
+
+function Initialize-TrayContext {
+  $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
+  $script:trayContext = Resolve-TrayControllerContext -ConfigPath $ConfigPath -CurrentWindowsIdentityName $currentWindowsIdentityName -AllowInvalidRemembered
+  $script:trayPaths = $script:trayContext.paths
+  $script:trayLogPath = $script:trayPaths.logPath
+  Ensure-Directory -Path $script:trayPaths.runtimeStateDirectory
+  Ensure-Directory -Path $script:trayPaths.logsDirectory
+}
+
+function Write-TrayLog {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Message,
+    [ValidateSet('INFO', 'WARN', 'ERROR')]
+    [string]$Level = 'INFO'
+  )
+
+  if ([string]::IsNullOrWhiteSpace($script:trayLogPath)) {
+    return
+  }
+
+  try {
+    Ensure-Directory -Path (Split-Path -Parent $script:trayLogPath)
+    Add-Content -LiteralPath $script:trayLogPath -Value ("{0} [{1}] {2}" -f (Get-Date).ToString('o'), $Level, $Message)
+  } catch {
+  }
+}
+
+function Acquire-TrayMutex {
+  $script:trayMutexName = Get-TrayInstanceMutexName -ServiceName $script:trayContext.serviceName
+  $createdNew = $false
+  $script:trayMutex = New-Object System.Threading.Mutex($true, $script:trayMutexName, [ref]$createdNew)
+  $script:ownsTrayMutex = $createdNew
+  if (-not $createdNew) {
+    Write-TrayLog -Level 'WARN' -Message "Another tray controller instance is already running for '$($script:trayContext.serviceName)'."
+    return $false
+  }
+
+  return $true
 }
 
 function Get-PrimaryOutputMessage {
@@ -191,53 +264,45 @@ function Get-PrimaryOutputMessage {
   return $message.Trim()
 }
 
-function Invoke-StatusReport {
-  $statusScript = Join-Path $PSScriptRoot 'status.ps1'
-  $arguments = @(
-    '-NoProfile',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-File',
-    $statusScript,
-    '-Json'
+function Get-NotifyIconForState {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$State
   )
 
-  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
-    $arguments += @('-ConfigPath', $ConfigPath)
+  if ($script:customIcons.ContainsKey($State)) {
+    return $script:customIcons[$State]
   }
 
-  try {
-    $output = & (Get-WindowsPowerShellExecutablePath) @arguments 2>&1
-    $exitCode = $LASTEXITCODE
-    $text = (($output | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
-  } catch {
-    return @{
-      report       = $null
-      exitCode     = 1
-      errorMessage = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback 'status.ps1 invocation failed.'
+  $candidatePaths = @(
+    (Join-Path $PSScriptRoot "assets\tray\openclaw-$State.ico"),
+    (Join-Path $PSScriptRoot 'assets\tray\openclaw.ico'),
+    (Join-Path $PSScriptRoot "assets\openclaw-$State.ico"),
+    (Join-Path $PSScriptRoot 'assets\openclaw.ico')
+  )
+
+  foreach ($candidatePath in $candidatePaths) {
+    if (-not (Test-Path -LiteralPath $candidatePath)) {
+      continue
+    }
+
+    try {
+      $icon = New-Object System.Drawing.Icon($candidatePath)
+      $script:customIcons[$State] = $icon
+      return $icon
+    } catch {
+      Write-TrayLog -Level 'WARN' -Message "Failed to load custom tray icon '$candidatePath': $($_.Exception.Message)"
     }
   }
 
-  if ([string]::IsNullOrWhiteSpace($text)) {
-    return @{
-      report      = $null
-      exitCode    = $exitCode
-      errorMessage = 'status.ps1 returned no JSON output.'
-    }
-  }
-
-  try {
-    return @{
-      report      = ($text | ConvertFrom-Json)
-      exitCode    = $exitCode
-      errorMessage = $null
-    }
-  } catch {
-    return @{
-      report      = $null
-      exitCode    = $exitCode
-      errorMessage = 'status.ps1 returned invalid JSON.'
-    }
+  switch ($State) {
+    'healthy' { return [System.Drawing.SystemIcons]::Information }
+    'degraded' { return [System.Drawing.SystemIcons]::Warning }
+    'unhealthy' { return [System.Drawing.SystemIcons]::Warning }
+    'stopped' { return [System.Drawing.SystemIcons]::Application }
+    'notInstalled' { return [System.Drawing.SystemIcons]::Application }
+    'loading' { return [System.Drawing.SystemIcons]::Application }
+    default { return [System.Drawing.SystemIcons]::Error }
   }
 }
 
@@ -255,25 +320,325 @@ function Show-TrayBalloon {
   $script:notifyIcon.ShowBalloonTip(4000)
 }
 
-function Update-TrayState {
-  if ($script:isBusy) {
+function Format-TrayTimestamp {
+  param(
+    [string]$Value
+  )
+
+  $parsed = ConvertFrom-IsoDateTime -Value $Value
+  if ($null -eq $parsed) {
+    return 'unknown'
+  }
+
+  return $parsed.ToLocalTime().ToString('HH:mm:ss')
+}
+
+function Get-RefreshStatusText {
+  if ($null -eq $script:refreshProcess) {
+    return $null
+  }
+
+  if ($script:refreshKind -eq 'deep') {
+    return 'Refreshing full status in background...'
+  }
+
+  return 'Refreshing status in background...'
+}
+
+function Get-UpdatedMenuText {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Snapshot
+  )
+
+  $parts = @((Format-TrayTimestamp -Value "$($Snapshot.observedAt)"))
+  if (-not [string]::IsNullOrWhiteSpace("$($Snapshot.refreshKind)")) {
+    $parts += "$($Snapshot.refreshKind)"
+  }
+
+  if ([bool]$Snapshot.stale) {
+    $parts += 'stale'
+  }
+
+  if ($null -ne $script:refreshProcess) {
+    $parts += 'refreshing'
+  }
+
+  return "Updated: $($parts -join ' | ')"
+}
+
+function Get-SummaryMenuText {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Snapshot
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace("$($Snapshot.issuesSummary)")) {
+    return "Issue: $($Snapshot.issuesSummary)"
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace("$($Snapshot.warningsSummary)")) {
+    return "Warning: $($Snapshot.warningsSummary)"
+  }
+
+  $refreshText = Get-RefreshStatusText
+  if (-not [string]::IsNullOrWhiteSpace($refreshText)) {
+    return "Info: $refreshText"
+  }
+
+  return "Info: $($Snapshot.summaryLine)"
+}
+
+function Refresh-TrayPresentation {
+  if ($null -eq $script:lastSnapshot) {
     return
   }
 
-  $status = Invoke-StatusReport
-  $stateInfo = Get-TrayStateFromStatusReport -Report $status.report -ErrorMessage $status.errorMessage
+  $snapshot = $script:lastSnapshot
+  $script:statusMenuItem.Text = "Status: $($snapshot.summary)"
+  $script:statusMenuItem.ToolTipText = "$($snapshot.detail)"
+  $script:updatedMenuItem.Text = Get-UpdatedMenuText -Snapshot $snapshot
+  $script:updatedMenuItem.ToolTipText = "Last deep refresh: $(Format-TrayTimestamp -Value "$($snapshot.lastDeepObservedAt)")"
+  $script:summaryMenuItem.Text = Get-SummaryMenuText -Snapshot $snapshot
+  $script:summaryMenuItem.ToolTipText = "$($snapshot.detail)"
 
-  $script:lastStateInfo = $stateInfo
-  $script:statusMenuItem.Text = "Status: $($stateInfo.summary)"
-  $script:statusMenuItem.ToolTipText = $stateInfo.detail
-  $script:startMenuItem.Enabled = $stateInfo.canStart
-  $script:stopMenuItem.Enabled = $stateInfo.canStop
-  $script:restartMenuItem.Enabled = $stateInfo.canRestart
-  $script:notifyIcon.Icon = Get-NotifyIconForState -State $stateInfo.state
-  $script:notifyIcon.Text = if ($stateInfo.tooltipText.Length -gt 63) {
-    $stateInfo.tooltipText.Substring(0, 63)
+  $script:startMenuItem.Enabled = ([bool]$snapshot.actions.canStart) -and -not $script:isActionBusy
+  $script:stopMenuItem.Enabled = ([bool]$snapshot.actions.canStop) -and -not $script:isActionBusy
+  $script:restartMenuItem.Enabled = ([bool]$snapshot.actions.canRestart) -and -not $script:isActionBusy
+  $script:refreshMenuItem.Enabled = -not $script:isActionBusy
+  $script:notifyIcon.Icon = Get-NotifyIconForState -State "$($snapshot.state)"
+  $script:notifyIcon.Text = if ($snapshot.tooltipText.Length -gt 63) {
+    $snapshot.tooltipText.Substring(0, 63)
   } else {
-    $stateInfo.tooltipText
+    $snapshot.tooltipText
+  }
+}
+
+function Apply-TraySnapshot {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Snapshot
+  )
+
+  $script:lastSnapshot = ConvertTo-PlainHashtable -InputObject $Snapshot
+  Refresh-TrayPresentation
+}
+
+function Read-InitialTraySnapshot {
+  try {
+    return (Read-TrayStateCache -CachePath $script:trayPaths.cachePath)
+  } catch {
+    Write-TrayLog -Level 'WARN' -Message "Failed to read tray cache '$($script:trayPaths.cachePath)': $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Queue-RefreshKind {
+  param(
+    [ValidateSet('fast', 'deep')]
+    [string]$Kind
+  )
+
+  if ($Kind -eq 'deep' -or $script:queuedRefreshKind -eq $null) {
+    $script:queuedRefreshKind = $Kind
+    return
+  }
+
+  if ($script:queuedRefreshKind -ne 'deep') {
+    $script:queuedRefreshKind = $Kind
+  }
+}
+
+function Start-RefreshProcess {
+  param(
+    [ValidateSet('fast', 'deep')]
+    [string]$Kind,
+    [string]$Reason
+  )
+
+  $script:refreshOutputPath = Join-Path $env:TEMP "openclaw-tray-refresh-$([guid]::NewGuid().ToString('N')).json"
+  $script:refreshErrorPath = Join-Path $env:TEMP "openclaw-tray-refresh-$([guid]::NewGuid().ToString('N')).err.txt"
+
+  $statusScript = Join-Path $PSScriptRoot 'status.ps1'
+  $arguments = @(
+    '-NoProfile',
+    '-WindowStyle',
+    'Hidden',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    $statusScript,
+    '-Json',
+    '-TraySnapshot',
+    '-RefreshKind',
+    $Kind
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $arguments += @('-ConfigPath', $ConfigPath)
+  }
+
+  $script:refreshProcess = Start-Process `
+    -FilePath (Get-WindowsPowerShellExecutablePath) `
+    -ArgumentList (ConvertTo-ArgumentString -Arguments $arguments) `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $script:refreshOutputPath `
+    -RedirectStandardError $script:refreshErrorPath `
+    -PassThru
+  $script:refreshKind = $Kind
+  $script:lastRefreshRequestAt = Get-Date
+  if ($Kind -eq 'deep') {
+    $script:lastDeepRequestAt = $script:lastRefreshRequestAt
+  } else {
+    $script:lastFastRequestAt = $script:lastRefreshRequestAt
+  }
+
+  Write-TrayLog -Message "Started $Kind refresh ($Reason)."
+  Refresh-TrayPresentation
+}
+
+function Request-TrayRefresh {
+  param(
+    [ValidateSet('fast', 'deep')]
+    [string]$Kind,
+    [string]$Reason
+  )
+
+  if ($script:isActionBusy) {
+    Queue-RefreshKind -Kind $Kind
+    return
+  }
+
+  if ($null -ne $script:refreshProcess -and -not $script:refreshProcess.HasExited) {
+    Queue-RefreshKind -Kind $Kind
+    return
+  }
+
+  Start-RefreshProcess -Kind $Kind -Reason $Reason
+}
+
+function Cleanup-RefreshArtifacts {
+  foreach ($path in @($script:refreshOutputPath, $script:refreshErrorPath)) {
+    if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
+      Remove-Item -LiteralPath $path -Force
+    }
+  }
+
+  $script:refreshOutputPath = $null
+  $script:refreshErrorPath = $null
+}
+
+function Start-QueuedRefreshIfNeeded {
+  if ([string]::IsNullOrWhiteSpace($script:queuedRefreshKind)) {
+    return
+  }
+
+  $queuedKind = $script:queuedRefreshKind
+  $script:queuedRefreshKind = $null
+  Request-TrayRefresh -Kind $queuedKind -Reason 'queued'
+}
+
+function Complete-RefreshIfReady {
+  if ($null -eq $script:refreshProcess -or -not $script:refreshProcess.HasExited) {
+    return
+  }
+
+  $currentKind = $script:refreshKind
+  $stdout = if (Test-Path -LiteralPath $script:refreshOutputPath) { Get-Content -LiteralPath $script:refreshOutputPath -Raw } else { '' }
+  $stderr = if (Test-Path -LiteralPath $script:refreshErrorPath) { Get-Content -LiteralPath $script:refreshErrorPath -Raw } else { '' }
+  $exitCode = $script:refreshProcess.ExitCode
+
+  try {
+    if ([string]::IsNullOrWhiteSpace($stdout)) {
+      throw "Tray refresh returned no JSON output. $stderr".Trim()
+    }
+
+    $snapshot = ConvertTo-PlainHashtable -InputObject ($stdout | ConvertFrom-Json)
+    Apply-TraySnapshot -Snapshot $snapshot
+    if ($currentKind -eq 'deep') {
+      $script:lastDeepCompletedAt = Get-Date
+    } else {
+      $script:lastFastCompletedAt = Get-Date
+    }
+
+    Write-TrayLog -Message "$currentKind refresh completed with exit code $exitCode and state '$($snapshot.state)'."
+
+    if ($script:startPhase -and $currentKind -eq 'deep') {
+      $script:startPhase = $false
+      if ($snapshot.state -eq 'error' -and -not $script:startupBalloonShown) {
+        Show-TrayBalloon -Title 'OpenClaw Tray' -Text "$($snapshot.detail)" -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+        $script:startupBalloonShown = $true
+      }
+    }
+  } catch {
+    $failureMessage = Get-PrimaryOutputMessage -Lines @($_.Exception.Message, $stderr) -Fallback "$currentKind refresh failed."
+    Write-TrayLog -Level 'ERROR' -Message $failureMessage
+
+    if ($null -ne $script:lastSnapshot) {
+      $staleSnapshot = Set-TrayStatusSnapshotStale -Snapshot $script:lastSnapshot -Reason $failureMessage -RefreshKind $currentKind
+      Apply-TraySnapshot -Snapshot $staleSnapshot
+    } else {
+      $errorSnapshot = New-TrayStatusSnapshot -ServiceName $script:trayContext.serviceName -Installed $false -Service $null -Health $null -RefreshKind $currentKind -ErrorMessage $failureMessage
+      Apply-TraySnapshot -Snapshot $errorSnapshot
+    }
+
+    if ($script:startPhase -and $currentKind -eq 'deep' -and -not $script:startupBalloonShown) {
+      Show-TrayBalloon -Title 'OpenClaw Tray' -Text $failureMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+      $script:startupBalloonShown = $true
+      $script:startPhase = $false
+    }
+  } finally {
+    Cleanup-RefreshArtifacts
+    $script:refreshProcess.Dispose()
+    $script:refreshProcess = $null
+    $script:refreshKind = $null
+    Refresh-TrayPresentation
+    Start-QueuedRefreshIfNeeded
+  }
+}
+
+function Should-RequestFastRefresh {
+  if ($null -eq $script:lastSnapshot) {
+    return $false
+  }
+
+  $reference = ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.observedAt)"
+  if ($null -eq $reference) {
+    return $true
+  }
+
+  return (((Get-Date) - $reference) -ge $script:fastRefreshInterval)
+}
+
+function Should-RequestDeepRefresh {
+  if ($null -eq $script:lastSnapshot) {
+    return $true
+  }
+
+  if ([bool]$script:lastSnapshot.stale) {
+    return $true
+  }
+
+  $reference = ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.lastDeepObservedAt)"
+  if ($null -eq $reference) {
+    return $true
+  }
+
+  return (((Get-Date) - $reference) -ge $script:deepRefreshInterval)
+}
+
+function Invoke-ScheduledRefresh {
+  if ($script:isActionBusy -or ($null -ne $script:refreshProcess)) {
+    return
+  }
+
+  if (Should-RequestDeepRefresh) {
+    Request-TrayRefresh -Kind 'deep' -Reason 'scheduled'
+    return
+  }
+
+  if (Should-RequestFastRefresh) {
+    Request-TrayRefresh -Kind 'fast' -Reason 'scheduled'
   }
 }
 
@@ -301,15 +666,12 @@ function Invoke-TrayAction {
     [string]$Action
   )
 
-  if ($script:isBusy) {
+  if ($script:isActionBusy) {
     return
   }
 
-  $script:isBusy = $true
-  $script:statusMenuItem.Text = "Status: ${Action} in progress..."
-  $script:startMenuItem.Enabled = $false
-  $script:stopMenuItem.Enabled = $false
-  $script:restartMenuItem.Enabled = $false
+  $script:isActionBusy = $true
+  Refresh-TrayPresentation
 
   $resultPath = Join-Path $env:TEMP "openclaw-tray-action-$([guid]::NewGuid().ToString('N')).json"
   try {
@@ -332,6 +694,7 @@ function Invoke-TrayAction {
       $arguments += @('-ConfigPath', $ConfigPath)
     }
 
+    Write-TrayLog -Message "Starting tray action '$Action'."
     $process = Start-Process -FilePath (Get-WindowsPowerShellExecutablePath) `
       -ArgumentList (ConvertTo-ArgumentString -Arguments $arguments) `
       -Verb RunAs `
@@ -351,6 +714,7 @@ function Invoke-TrayAction {
         $resultMessage = "Service action '$Action' completed."
       }
 
+      Write-TrayLog -Message "Tray action '$Action' completed successfully."
       Show-TrayBalloon -Title 'OpenClaw Service' -Text $resultMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Info)
       return
     }
@@ -359,20 +723,25 @@ function Invoke-TrayAction {
       $resultMessage = "Service action '$Action' failed."
     }
 
+    Write-TrayLog -Level 'ERROR' -Message "Tray action '$Action' failed: $resultMessage"
     Show-TrayBalloon -Title 'OpenClaw Service' -Text $resultMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
   } catch {
     if (Test-IsElevationCanceled -Exception $_.Exception) {
+      Write-TrayLog -Level 'WARN' -Message "Tray action '$Action' was canceled at the UAC prompt."
       Show-TrayBalloon -Title 'OpenClaw Service' -Text 'Action canceled at the UAC prompt.' -Icon ([System.Windows.Forms.ToolTipIcon]::Warning)
     } else {
-      Show-TrayBalloon -Title 'OpenClaw Service' -Text (Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback "Service action '$Action' failed.") -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+      $message = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback "Service action '$Action' failed."
+      Write-TrayLog -Level 'ERROR' -Message "Tray action '$Action' failed: $message"
+      Show-TrayBalloon -Title 'OpenClaw Service' -Text $message -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
     }
   } finally {
     if (Test-Path -LiteralPath $resultPath) {
       Remove-Item -LiteralPath $resultPath -Force
     }
 
-    $script:isBusy = $false
-    Update-TrayState
+    $script:isActionBusy = $false
+    Refresh-TrayPresentation
+    Request-TrayRefresh -Kind 'deep' -Reason "post-$Action"
   }
 }
 
@@ -380,12 +749,44 @@ if ($NoRun) {
   return
 }
 
-$script:isBusy = $false
-$script:lastStateInfo = $null
+$script:trayContext = $null
+$script:trayPaths = $null
+$script:trayLogPath = $null
+$script:trayMutex = $null
+$script:trayMutexName = $null
+$script:ownsTrayMutex = $false
+$script:lastSnapshot = $null
+$script:refreshProcess = $null
+$script:refreshKind = $null
+$script:refreshOutputPath = $null
+$script:refreshErrorPath = $null
+$script:queuedRefreshKind = $null
+$script:lastRefreshRequestAt = $null
+$script:lastFastRequestAt = $null
+$script:lastDeepRequestAt = $null
+$script:lastFastCompletedAt = $null
+$script:lastDeepCompletedAt = $null
+$script:fastRefreshInterval = [TimeSpan]::FromSeconds(15)
+$script:deepRefreshInterval = [TimeSpan]::FromSeconds(60)
+$script:menuRefreshInterval = [TimeSpan]::FromSeconds(5)
+$script:isActionBusy = $false
+$script:startPhase = $true
+$script:startupBalloonShown = $false
+$script:customIcons = @{}
+
+Initialize-TrayContext
+if (-not (Acquire-TrayMutex)) {
+  return
+}
+
+Write-TrayLog -Message "Tray controller starting for '$($script:trayContext.serviceName)'."
+
 $script:applicationContext = New-Object System.Windows.Forms.ApplicationContext
 $script:notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $script:contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $script:statusMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$script:updatedMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$script:summaryMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $script:startMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $script:stopMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $script:restartMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
@@ -393,15 +794,18 @@ $script:refreshMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $script:exitMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $script:refreshTimer = New-Object System.Windows.Forms.Timer
 
-$script:statusMenuItem.Text = 'Status: Checking...'
 $script:statusMenuItem.Enabled = $false
+$script:updatedMenuItem.Enabled = $false
+$script:summaryMenuItem.Enabled = $false
 $script:startMenuItem.Text = 'Start'
 $script:stopMenuItem.Text = 'Stop'
 $script:restartMenuItem.Text = 'Restart'
-$script:refreshMenuItem.Text = 'Refresh'
+$script:refreshMenuItem.Text = 'Refresh Now'
 $script:exitMenuItem.Text = 'Exit Tray'
 
 [void]$script:contextMenu.Items.Add($script:statusMenuItem)
+[void]$script:contextMenu.Items.Add($script:updatedMenuItem)
+[void]$script:contextMenu.Items.Add($script:summaryMenuItem)
 [void]$script:contextMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void]$script:contextMenu.Items.Add($script:startMenuItem)
 [void]$script:contextMenu.Items.Add($script:stopMenuItem)
@@ -411,30 +815,77 @@ $script:exitMenuItem.Text = 'Exit Tray'
 [void]$script:contextMenu.Items.Add($script:exitMenuItem)
 
 $script:notifyIcon.ContextMenuStrip = $script:contextMenu
-$script:notifyIcon.Text = 'OpenClaw tray: starting'
-$script:notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
 $script:notifyIcon.Visible = $true
+
+$initialSnapshot = Read-InitialTraySnapshot
+if ($null -eq $initialSnapshot) {
+  $initialSnapshot = New-LoadingTraySnapshot -ServiceName $script:trayContext.serviceName
+}
+
+Apply-TraySnapshot -Snapshot $initialSnapshot
 
 $script:startMenuItem.add_Click({ Invoke-TrayAction -Action 'start' })
 $script:stopMenuItem.add_Click({ Invoke-TrayAction -Action 'stop' })
 $script:restartMenuItem.add_Click({ Invoke-TrayAction -Action 'restart' })
-$script:refreshMenuItem.add_Click({ Update-TrayState })
+$script:refreshMenuItem.add_Click({ Request-TrayRefresh -Kind 'deep' -Reason 'manual' })
 $script:exitMenuItem.add_Click({
   $script:refreshTimer.Stop()
+  if ($null -ne $script:refreshProcess -and -not $script:refreshProcess.HasExited) {
+    try {
+      $script:refreshProcess.Kill()
+    } catch {
+    }
+  }
+
   $script:notifyIcon.Visible = $false
   $script:applicationContext.ExitThread()
 })
-$script:contextMenu.add_Opening({ Update-TrayState })
-$script:refreshTimer.Interval = 10000
-$script:refreshTimer.add_Tick({ Update-TrayState })
+$script:contextMenu.add_Opening({
+  $reference = if ($null -ne $script:lastSnapshot) { ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.observedAt)" } else { $null }
+  if ($null -eq $reference -or (((Get-Date) - $reference) -ge $script:menuRefreshInterval)) {
+    Request-TrayRefresh -Kind 'fast' -Reason 'menu-opening'
+  }
+
+  if (Should-RequestDeepRefresh) {
+    Request-TrayRefresh -Kind 'deep' -Reason 'menu-opening'
+  }
+})
+$script:refreshTimer.Interval = 1000
+$script:refreshTimer.add_Tick({
+  Complete-RefreshIfReady
+  Invoke-ScheduledRefresh
+})
 $script:refreshTimer.Start()
 
 try {
-  Update-TrayState
+  Request-TrayRefresh -Kind 'deep' -Reason 'startup'
   [System.Windows.Forms.Application]::Run($script:applicationContext)
 } finally {
+  Write-TrayLog -Message 'Tray controller shutting down.'
   $script:refreshTimer.Stop()
   $script:refreshTimer.Dispose()
   $script:contextMenu.Dispose()
   $script:notifyIcon.Dispose()
+
+  foreach ($icon in $script:customIcons.Values) {
+    if ($null -ne $icon) {
+      $icon.Dispose()
+    }
+  }
+
+  Cleanup-RefreshArtifacts
+  if ($null -ne $script:refreshProcess) {
+    $script:refreshProcess.Dispose()
+  }
+
+  if ($script:ownsTrayMutex -and $null -ne $script:trayMutex) {
+    try {
+      $script:trayMutex.ReleaseMutex()
+    } catch {
+    }
+  }
+
+  if ($null -ne $script:trayMutex) {
+    $script:trayMutex.Dispose()
+  }
 }

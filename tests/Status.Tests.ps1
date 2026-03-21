@@ -455,4 +455,147 @@ Describe 'status.ps1' {
 
     @($report.issues) | Should -Contain "Restart task '\OpenClaw\$($config.serviceName)-Restart' does not match the expected wrapper action. Reinstall the service to restore intentional restart bridging."
   }
+
+  It 'emits a degraded tray snapshot when health is ok but issues exist' {
+    $runtimeRoot = Join-Path $env:TEMP "tray-status-runtime-$([guid]::NewGuid().ToString('N'))"
+    $logsRoot = Join-Path $env:TEMP "tray-status-logs-$([guid]::NewGuid().ToString('N'))"
+    $configPath = New-StatusTestConfig -Overrides @{
+      runtimeStateDir = $runtimeRoot
+      logsDir         = $logsRoot
+    }
+    $script:testPaths += @($configPath, $runtimeRoot, $logsRoot)
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'CONTOSO\svc-openclaw'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode    = 'credential'
+        deprecatedAlias   = $false
+        expectedStartName = 'CONTOSO\svc-openclaw'
+        actualStartName   = 'CONTOSO\svc-openclaw'
+        matches           = $true
+        installLayout     = 'generated'
+      }
+    }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $false
+        state          = $null
+        matches        = $false
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = $null
+          arguments = $null
+        }
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+    $output = & $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep
+    $LASTEXITCODE | Should -Be 1
+    $report = $output | ConvertFrom-Json
+
+    $report.state | Should -Be 'degraded'
+    $report.health.source | Should -Be 'live'
+    $report.issuesSummary | Should -Match 'Restart task'
+  }
+
+  It 'reuses cached health data for fast tray snapshots' {
+    $runtimeRoot = Join-Path $env:TEMP "tray-fast-runtime-$([guid]::NewGuid().ToString('N'))"
+    $logsRoot = Join-Path $env:TEMP "tray-fast-logs-$([guid]::NewGuid().ToString('N'))"
+    $configPath = New-StatusTestConfig -Overrides @{
+      runtimeStateDir = $runtimeRoot
+      logsDir         = $logsRoot
+    }
+    $script:testPaths += @($configPath, $runtimeRoot, $logsRoot)
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'CONTOSO\svc-openclaw'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode    = 'credential'
+        deprecatedAlias   = $false
+        expectedStartName = 'CONTOSO\svc-openclaw'
+        actualStartName   = 'CONTOSO\svc-openclaw'
+        matches           = $true
+        installLayout     = 'generated'
+      }
+    }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $false
+        state          = $null
+        matches        = $false
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = $null
+          arguments = $null
+        }
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+    [void](& $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep)
+    $fastOutput = & $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind fast
+    $fastReport = $fastOutput | ConvertFrom-Json
+
+    $fastReport.refreshKind | Should -Be 'fast'
+    $fastReport.health.source | Should -Be 'cache'
+    $fastReport.lastDeepObservedAt | Should -Not -BeNullOrEmpty
+    $fastReport.state | Should -Be 'degraded'
+  }
 }

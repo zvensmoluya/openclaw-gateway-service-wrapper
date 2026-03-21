@@ -77,6 +77,14 @@ Describe 'tray controller support' {
       health      = [pscustomobject]@{ ok = $true; error = $null }
       issues      = @()
     })
+    $degraded = Get-TrayStateFromStatusReport -Report ([pscustomobject]@{
+      serviceName = 'OpenClawService'
+      installed   = $true
+      service     = [pscustomobject]@{ status = 'Running' }
+      health      = [pscustomobject]@{ ok = $true; error = $null }
+      issues      = @('Restart task is missing.')
+      warnings    = @('Deprecated mode.')
+    })
     $unhealthy = Get-TrayStateFromStatusReport -Report ([pscustomobject]@{
       serviceName = 'OpenClawService'
       installed   = $true
@@ -101,6 +109,9 @@ Describe 'tray controller support' {
 
     $healthy.state | Should -Be 'healthy'
     $healthy.canRestart | Should -BeTrue
+    $degraded.state | Should -Be 'degraded'
+    $degraded.canStop | Should -BeTrue
+    $degraded.issuesSummary | Should -Be 'Restart task is missing.'
     $unhealthy.state | Should -Be 'unhealthy'
     $unhealthy.canStop | Should -BeTrue
     $stopped.state | Should -Be 'stopped'
