@@ -35,6 +35,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 
 默认情况下，安装还会在当前 Windows 用户的 Startup 文件夹里创建 `tray-controller.ps1` 的启动快捷方式。Windows Service 和托盘控制器是两层不同的东西：前者是机器级后台服务，后者是登录会话里的控制入口。
 
+如果目标机器上的服务流量必须走代理，请在安装或重装前先在 wrapper 配置里设置 `httpProxy`、`httpsProxy`、`allProxy` 和/或 `noProxy`。wrapper 会在运行期把这些值导出给 OpenClaw 子进程。
+
 ## 启动、停止、重启
 
 一旦有 remembered config，后续常用脚本可以省略 `-ConfigPath`：
@@ -87,6 +89,7 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1
 - `identity.expectedStartName`：wrapper 期望的 Windows 服务账户
 - `identity.actualStartName`：服务当前实际使用的 Windows 账户
 - `identity.installLayout`：`generated` 或 `legacyRoot`
+- `proxy.httpProxy` / `proxy.httpsProxy` / `proxy.allProxy` / `proxy.noProxy`：wrapper 侧的脱敏代理输入，以及每个值来自 wrapper 配置还是 ambient environment
 
 `doctor.ps1` 还会检查 `configPath` 指向的 OpenClaw 配置文件是否存在，以及 JSON 语法是否有效。
 
@@ -100,6 +103,7 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1
 ## 运维说明
 
 - 目标机器上需要已经可用的 `openclaw` CLI
+- wrapper 代理字段属于服务级环境注入，和上游 OpenClaw 里的 `channels.telegram.proxy` 这类模块级配置不是一回事
 - 健康检查默认访问 `http://127.0.0.1:<port>/health`
 - 默认停机逻辑只会结束记录下来的服务进程树，不会扫端口误杀其他进程
 - 如果 remembered config 指向的文件已经失效，运维脚本会直接失败，直到你显式传入 `-ConfigPath` 或重新成功安装

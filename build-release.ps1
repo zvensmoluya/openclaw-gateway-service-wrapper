@@ -46,6 +46,7 @@ try {
     'service-config.json',
     'service-config.local.example.json',
     'service-config.credential.example.json',
+    'service-config.proxy.example.json',
     'service-config.custom-port.example.json',
     'start.ps1',
     'status.ps1',

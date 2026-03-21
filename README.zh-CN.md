@@ -50,6 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 
 - Wrapper 配置：`service-config.json` 或显式传入的 `-ConfigPath`。它控制服务名、端口、路径、WinSW 设置，以及要传给 OpenClaw 的配置文件路径。
 - OpenClaw 配置：`configPath` 指向的文件，默认是 `%USERPROFILE%\.openclaw\openclaw.json`。这份文件由上游 OpenClaw CLI 自己消费。
+- Windows Service 子进程的标准代理环境：可在 wrapper 配置里通过 `httpProxy`、`httpsProxy`、`allProxy`、`noProxy` 显式设置。
 
 本仓库不提供 `openclaw.json` 示例，因为它的 schema 属于上游 OpenClaw。
 
@@ -68,6 +69,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 
 - `service-config.local.example.json`：本地快速安装示例，使用已弃用但兼容的 `currentUser` 别名；底层仍然会安装成一个带凭据的 Windows Service
 - `service-config.credential.example.json`：推荐的服务账号安装示例
+- `service-config.proxy.example.json`：服务环境需要走代理时可直接复用的 overlay 示例
 - `service-config.custom-port.example.json`：自定义服务名和端口示例
 
 ## 服务账号
@@ -117,4 +119,5 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 0.1.0
 - 这个仓库不包含 OpenClaw 上游源码
 - WinSW 二进制不会直接提交进仓库，而是在安装时下载并做 SHA256 校验
 - 停机逻辑默认使用“精确结束记录下来的服务进程树”，不再按端口扫描后强杀
-- `status.ps1` 和 `doctor.ps1` 会显示 `configSource`、`sourcePath`、`rememberedPath` 以及服务身份信息，方便确认当前到底读的是哪份 wrapper 配置、服务又是以哪个 Windows 账户运行
+- `status.ps1` 和 `doctor.ps1` 会显示 `configSource`、`sourcePath`、`rememberedPath`、服务身份信息，以及脱敏后的代理摘要，方便确认当前到底读的是哪份 wrapper 配置、服务又是以哪个 Windows 账户和哪组 wrapper 代理输入运行
+- `channels.telegram.proxy` 仍然属于上游 OpenClaw 的模块级配置；wrapper 里的代理字段是服务级环境注入，两者相互独立

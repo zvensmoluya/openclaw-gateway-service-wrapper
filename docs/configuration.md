@@ -55,6 +55,21 @@ After that first successful install, later operational scripts can omit `-Config
 - `openclawCommand`: optional explicit path or command name for the OpenClaw CLI
 - `allowForceBind`: controls whether `--force` is appended
 
+## Proxy Fields
+
+- `httpProxy`: optional proxy URL exported as `HTTP_PROXY` / `http_proxy`
+- `httpsProxy`: optional proxy URL exported as `HTTPS_PROXY` / `https_proxy`
+- `allProxy`: optional proxy URL exported as `ALL_PROXY` / `all_proxy`
+- `noProxy`: optional bypass list exported as `NO_PROXY` / `no_proxy`
+
+Proxy semantics:
+
+- If a proxy field is omitted, the wrapper leaves the current process environment unchanged for that variable.
+- If a proxy field is a non-empty string, the wrapper exports that value into the OpenClaw service process before launching `openclaw`.
+- If a proxy field is present as an empty string, the wrapper clears that proxy variable from the OpenClaw service process.
+
+These proxy fields belong to the wrapper config, not upstream `openclaw.json`. They are intended to cover service-wide outbound networking such as `web_search`, `web_fetch`, and helper CLIs started by OpenClaw. Module-specific settings such as `channels.telegram.proxy` remain upstream OpenClaw settings and are separate from wrapper proxy injection.
+
 ## WinSW Fields
 
 - `winswVersion`: pinned WinSW release version
@@ -82,7 +97,18 @@ These example files are overlays, not full manifests. They rely on repository de
 
 - `service-config.local.example.json`
 - `service-config.credential.example.json`
+- `service-config.proxy.example.json`
 - `service-config.custom-port.example.json`
+
+## Proxy Overlay Example
+
+```json
+{
+  "httpProxy": "http://127.0.0.1:7897",
+  "httpsProxy": "http://127.0.0.1:7897",
+  "noProxy": "localhost,127.0.0.1,::1"
+}
+```
 
 ## Path Tokens
 

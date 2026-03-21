@@ -54,6 +54,7 @@ try {
         port                = $null
         bind                = $null
       }
+      proxy = New-EmptyWrapperProxyStatusReport
       identity = $identity
       warnings = $emptyWarnings
       dependencies = @{
@@ -97,6 +98,7 @@ try {
   $config.rememberedPath = $selection.rememberedPath
   $layout = Get-ServiceArtifactLayout -Config $config
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $proxy = Get-WrapperProxyStatusReport -Config $config
   $reportedWinSWExecutable = if ($service.installed -and -not [string]::IsNullOrWhiteSpace($service.pathName)) {
     Get-ServiceExecutablePathFromPathName -PathName $service.pathName
   } elseif ($identity.installLayout -eq 'legacyRoot') {
@@ -177,6 +179,7 @@ try {
       port               = $config.port
       bind               = $config.bind
     }
+    proxy = $proxy
     identity = $identity
     warnings = $warnings
     dependencies = @{
@@ -206,6 +209,10 @@ try {
     Write-Host "OpenClaw command  : $openclawCommand"
     Write-Host "WinSW executable  : $reportedWinSWExecutable"
     Write-Host "WinSW XML         : $reportedWinSWXml"
+    Write-Host "HTTP proxy        : $($proxy.httpProxy.value) [$($proxy.httpProxy.source)]"
+    Write-Host "HTTPS proxy       : $($proxy.httpsProxy.value) [$($proxy.httpsProxy.source)]"
+    Write-Host "ALL proxy         : $($proxy.allProxy.value) [$($proxy.allProxy.source)]"
+    Write-Host "NO_PROXY          : $($proxy.noProxy.value) [$($proxy.noProxy.source)]"
     Write-Host "Service installed : $($service.installed)"
     Write-Host "Service status    : $($service.status)"
     Write-Host "Port listeners    : $($listeners.Count)"

@@ -36,6 +36,17 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 - 检查 `configPath` 指向的 OpenClaw 配置
 - 确认服务账号对 `stateDir` 和 `tempDir` 有写权限
 
+## 需要走代理时 `web_search`、`web_fetch` 或技能安装失败
+
+- 在 `service-config.json` 或你实际使用的 wrapper 配置里设置这些服务级代理字段：
+  - `httpProxy`
+  - `httpsProxy`
+  - `allProxy`
+  - `noProxy`
+- 修改 wrapper 代理配置后，重启或重装服务，让新的环境变量真正进入服务进程。
+- 运行 `status.ps1` 或 `doctor.ps1`，检查输出里的脱敏 `proxy.*` 字段。
+- 要注意：`channels.telegram.proxy` 是上游 OpenClaw 的模块级配置。Telegram 正常并不代表 wrapper 级的统一服务网络已经拿到了代理环境。
+
 ## 端口已被占用
 
 - 运行 `doctor.ps1` 看当前监听者

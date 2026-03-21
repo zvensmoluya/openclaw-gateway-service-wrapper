@@ -37,6 +37,8 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 
 By default, install also creates a Startup shortcut for `tray-controller.ps1` in the current Windows user's Startup folder. The Windows Service and the tray controller are separate layers: the service is machine background infrastructure, while the tray icon is a per-sign-in control surface.
 
+If the machine needs an outbound proxy for service traffic, set `httpProxy`, `httpsProxy`, `allProxy`, and/or `noProxy` in the wrapper config before installing or reinstalling the service. The wrapper exports those values to the OpenClaw child process at runtime.
+
 ## Start, Stop, Restart
 
 Once a config has been remembered, later operational scripts can omit `-ConfigPath`:
@@ -89,6 +91,7 @@ Both commands report:
 - `identity.expectedStartName`: the Windows account the wrapper expects
 - `identity.actualStartName`: the Windows account the service is actually using
 - `identity.installLayout`: `generated` or `legacyRoot`
+- `proxy.httpProxy` / `proxy.httpsProxy` / `proxy.allProxy` / `proxy.noProxy`: redacted wrapper-side proxy inputs and whether each value came from wrapper config or the ambient environment
 
 `doctor.ps1` also validates that the OpenClaw config file referenced by `configPath` exists and contains valid JSON.
 
@@ -102,6 +105,7 @@ Both commands report:
 ## Operational Notes
 
 - The wrapper expects a working `openclaw` CLI on the target machine.
+- Wrapper proxy fields are service-wide environment inputs. They are separate from upstream module-specific settings such as `channels.telegram.proxy`.
 - Health checks use `http://127.0.0.1:<port>/health`.
 - Default stop behavior targets the recorded service process tree only.
 - If a remembered config path goes stale, operational scripts fail fast until you pass `-ConfigPath` explicitly or reinstall successfully.

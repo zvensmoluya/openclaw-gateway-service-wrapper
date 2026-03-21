@@ -42,6 +42,7 @@ try {
       serviceName = $selection.rememberedServiceName
       installed   = $service.installed
       service     = $service
+      proxy       = New-EmptyWrapperProxyStatusReport
       health      = @{
         ok         = $false
         statusCode = $null
@@ -82,6 +83,7 @@ try {
   $config.configSource = $selection.configSource
   $config.rememberedPath = $selection.rememberedPath
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $proxy = Get-WrapperProxyStatusReport -Config $config
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
   $warnings = [System.Collections.ArrayList]::new()
   $issues = @()
@@ -125,6 +127,7 @@ try {
     serviceName = $config.serviceName
     installed   = $service.installed
     service     = $service
+    proxy       = $proxy
     health      = $health
     healthUrl   = $config.healthUrl
     port        = $config.port
@@ -152,6 +155,10 @@ try {
     Write-Host "Installed    : $($service.installed)"
     Write-Host "Status       : $($service.status)"
     Write-Host "Start type   : $($service.startType)"
+    Write-Host "HTTP proxy   : $($proxy.httpProxy.value) [$($proxy.httpProxy.source)]"
+    Write-Host "HTTPS proxy  : $($proxy.httpsProxy.value) [$($proxy.httpsProxy.source)]"
+    Write-Host "ALL proxy    : $($proxy.allProxy.value) [$($proxy.allProxy.source)]"
+    Write-Host "NO_PROXY     : $($proxy.noProxy.value) [$($proxy.noProxy.source)]"
     Write-Host "Health URL   : $($config.healthUrl)"
     if ($health.ok) {
       Write-Host "Health       : OK ($($health.statusCode))"

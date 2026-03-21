@@ -212,6 +212,71 @@ Describe 'doctor.ps1' {
     @($report.issues).Count | Should -Be 0
   }
 
+  It 'reports redacted proxy settings and their sources' {
+    $originalHttps = [System.Environment]::GetEnvironmentVariable('HTTPS_PROXY', 'Process')
+    $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
+    $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
+    $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
+    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir -Overrides @{
+      httpProxy = 'http://user:secret@proxy.example:8080/path?x=1'
+      noProxy   = 'localhost,127.0.0.1'
+    }
+    $script:testPaths += @($stateDir, $gatewayDir, $gatewayConfigPath, $configPath)
+
+    try {
+      New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+      New-Item -ItemType Directory -Path $gatewayDir -Force | Out-Null
+      Set-Content -LiteralPath $gatewayConfigPath -Value (@{ name = 'test' } | ConvertTo-Json -Depth 10) -Encoding UTF8
+      [System.Environment]::SetEnvironmentVariable('HTTPS_PROXY', 'http://ambient-proxy.example:8443', 'Process')
+
+      $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+      $serviceDetails = @{
+        installed = $true
+        name      = $config.serviceName
+        status    = 'Running'
+        startType = 'Automatic'
+        processId = 1
+        startName = 'CONTOSO\svc-openclaw'
+        pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+      }
+      $health = @{
+        ok         = $true
+        statusCode = 200
+        body       = '{"ok":true}'
+        error      = $null
+      }
+
+      Mock Get-ServiceDetails { $serviceDetails }
+      Mock Invoke-HealthCheck { $health }
+      Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+      Mock Get-PortListeners { @() }
+      Mock Get-ServiceIdentityReport {
+        @{
+          configuredMode    = 'credential'
+          deprecatedAlias   = $false
+          expectedStartName = 'CONTOSO\svc-openclaw'
+          actualStartName   = 'CONTOSO\svc-openclaw'
+          matches           = $true
+          installLayout     = 'generated'
+        }
+      }
+      Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+      $output = & $script:doctorScript -ConfigPath $configPath -Json
+      $LASTEXITCODE | Should -Be 0
+      $report = $output | ConvertFrom-Json
+
+      $report.proxy.httpProxy.source | Should -Be 'wrapperConfig'
+      $report.proxy.httpProxy.value | Should -Be 'http://proxy.example:8080'
+      $report.proxy.httpsProxy.source | Should -Be 'ambientEnvironment'
+      $report.proxy.httpsProxy.value | Should -Be 'http://ambient-proxy.example:8443'
+      $report.proxy.noProxy.source | Should -Be 'wrapperConfig'
+      $report.proxy.noProxy.value | Should -Be 'localhost,127.0.0.1'
+    } finally {
+      [System.Environment]::SetEnvironmentVariable('HTTPS_PROXY', $originalHttps, 'Process')
+    }
+  }
+
   It 'accepts a LocalSystem service when configured for localSystem' {
     $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
     $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"

@@ -60,6 +60,21 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 - `openclawCommand`：可选，显式指定 OpenClaw CLI 路径或命令名
 - `allowForceBind`：控制是否追加 `--force`
 
+## 代理字段
+
+- `httpProxy`：可选代理地址，会导出为 `HTTP_PROXY` / `http_proxy`
+- `httpsProxy`：可选代理地址，会导出为 `HTTPS_PROXY` / `https_proxy`
+- `allProxy`：可选代理地址，会导出为 `ALL_PROXY` / `all_proxy`
+- `noProxy`：可选绕过列表，会导出为 `NO_PROXY` / `no_proxy`
+
+代理字段语义：
+
+- 如果某个字段缺失，wrapper 不会改动当前进程里对应的环境变量。
+- 如果某个字段是非空字符串，wrapper 会在启动 `openclaw` 前把它注入到服务子进程环境。
+- 如果某个字段显式写成空字符串，wrapper 会在启动 `openclaw` 前清除对应代理变量。
+
+这些代理字段属于 wrapper 配置，不属于上游 `openclaw.json`。它们用于覆盖 Windows Service 场景下的统一出站网络，例如 `web_search`、`web_fetch` 和 OpenClaw 拉起的辅助 CLI。像 `channels.telegram.proxy` 这样的模块级配置仍然归上游 OpenClaw 自己管理。
+
 ## WinSW 相关字段
 
 - `winswVersion`：固定的 WinSW 版本
@@ -87,7 +102,18 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 - `service-config.local.example.json`
 - `service-config.credential.example.json`
+- `service-config.proxy.example.json`
 - `service-config.custom-port.example.json`
+
+## 代理 Overlay 示例
+
+```json
+{
+  "httpProxy": "http://127.0.0.1:7897",
+  "httpsProxy": "http://127.0.0.1:7897",
+  "noProxy": "localhost,127.0.0.1,::1"
+}
+```
 
 ## 路径占位符
 

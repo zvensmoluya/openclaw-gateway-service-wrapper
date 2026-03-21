@@ -51,6 +51,8 @@ try {
   $env:TMP = $config.tempDir
   $env:TMPDIR = $config.tempDir
 
+  [void](Set-WrapperProxyEnvironment -Config $config)
+
   $arguments = @('gateway', 'run', '--bind', $config.bind, '--port', [string]$config.port)
   if ($config.allowForceBind) {
     $arguments += '--force'

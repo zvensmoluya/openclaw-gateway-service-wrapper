@@ -36,6 +36,17 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 - Check the OpenClaw config referenced by `configPath`.
 - Verify the selected `stateDir` and `tempDir` are writable by the service account.
 
+## `web_search`, `web_fetch`, or Skill Install Fails Behind a Proxy
+
+- Set wrapper-level proxy fields in `service-config.json` or your explicit wrapper config:
+  - `httpProxy`
+  - `httpsProxy`
+  - `allProxy`
+  - `noProxy`
+- Reinstall or restart the service after changing wrapper proxy config so the service process gets the updated environment.
+- Run `status.ps1` or `doctor.ps1` and check the redacted `proxy.*` report entries.
+- Remember that `channels.telegram.proxy` is module-specific upstream OpenClaw config. Telegram working does not prove that wrapper-wide service networking already has proxy env configured.
+
 ## Port Already in Use
 
 - Run `doctor.ps1` to inspect current listeners.

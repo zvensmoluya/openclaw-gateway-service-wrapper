@@ -50,6 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 
 - Wrapper config: `service-config.json` or an explicit `-ConfigPath`. This controls service name, ports, paths, WinSW settings, and which OpenClaw config file should be passed through.
 - OpenClaw config: the file pointed to by `configPath` (default `%USERPROFILE%\.openclaw\openclaw.json`). This is consumed by the upstream OpenClaw CLI itself.
+- Standard proxy env for the Windows Service child process: optionally set in the wrapper config via `httpProxy`, `httpsProxy`, `allProxy`, and `noProxy`.
 
 This repository does not ship an `openclaw.json` example because that schema belongs to upstream OpenClaw.
 
@@ -69,6 +70,7 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 - `service-config.local.example.json`: current-user compatibility alias for local installs; still installs a credential-backed Windows Service
 - `service-config.credential.example.json`: service-account install with machine-level paths
 - `service-config.local-system.example.json`: LocalSystem install example for machines where the user account does not have a service-usable password
+- `service-config.proxy.example.json`: proxy overlay example for service environments that cannot reach upstream endpoints directly
 - `service-config.custom-port.example.json`: alternate service name and port
 
 ## Service Account Support
@@ -119,4 +121,5 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 0.1.0
 - The repository does not vendor the upstream OpenClaw source code.
 - Third-party WinSW binaries are downloaded during install and verified by SHA256.
 - The current implementation prefers precise process-tree shutdown over port-based kill logic.
-- `status.ps1` and `doctor.ps1` report `configSource`, `sourcePath`, `rememberedPath`, and service identity details so operators can see which wrapper config and Windows account are actually active.
+- `status.ps1` and `doctor.ps1` report `configSource`, `sourcePath`, `rememberedPath`, service identity details, and a redacted proxy summary so operators can see which wrapper config, Windows account, and wrapper-supplied proxy inputs are actually active.
+- `channels.telegram.proxy` stays upstream OpenClaw config and remains module-specific. Wrapper proxy fields are service-wide environment inputs for OpenClaw and its child processes.

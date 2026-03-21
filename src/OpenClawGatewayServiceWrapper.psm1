@@ -111,6 +111,10 @@ function Get-DefaultServiceConfig {
     stateDir           = '%USERPROFILE%\.openclaw'
     configPath         = '%USERPROFILE%\.openclaw\openclaw.json'
     tempDir            = '%LOCALAPPDATA%\Temp'
+    httpProxy          = $null
+    httpsProxy         = $null
+    allProxy           = $null
+    noProxy            = $null
     serviceAccountMode = 'credential'
     openclawCommand    = ''
     allowForceBind     = $false
@@ -129,6 +133,215 @@ function Get-DefaultServiceConfig {
     runtimeStateDir    = '.runtime'
     logsDir            = 'logs'
   }
+}
+
+function Get-WrapperProxyVariableDefinitions {
+  return @(
+    @{
+      configKey = 'httpProxy'
+      variables = @('HTTP_PROXY', 'http_proxy')
+      redactUrl = $true
+    },
+    @{
+      configKey = 'httpsProxy'
+      variables = @('HTTPS_PROXY', 'https_proxy')
+      redactUrl = $true
+    },
+    @{
+      configKey = 'allProxy'
+      variables = @('ALL_PROXY', 'all_proxy')
+      redactUrl = $true
+    },
+    @{
+      configKey = 'noProxy'
+      variables = @('NO_PROXY', 'no_proxy')
+      redactUrl = $false
+    }
+  )
+}
+
+function Normalize-OptionalWrapperConfigString {
+  param(
+    [AllowNull()]
+    $Value
+  )
+
+  if ($null -eq $Value) {
+    return $null
+  }
+
+  return $Value.ToString().Trim()
+}
+
+function Get-EnvironmentVariableEntry {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Names,
+    [System.Collections.IDictionary]$Environment = [System.Environment]::GetEnvironmentVariables()
+  )
+
+  foreach ($name in $Names) {
+    foreach ($key in $Environment.Keys) {
+      if (-not [string]::Equals($key.ToString(), $name, [System.StringComparison]::OrdinalIgnoreCase)) {
+        continue
+      }
+
+      $value = Normalize-OptionalWrapperConfigString -Value $Environment[$key]
+      if ($null -eq $value) {
+        continue
+      }
+
+      return @{
+        found = $true
+        name  = $key.ToString()
+        value = $value
+      }
+    }
+  }
+
+  return @{
+    found = $false
+    name  = $null
+    value = $null
+  }
+}
+
+function Redact-ProxyUrl {
+  param(
+    [AllowNull()]
+    [string]$Value
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $null
+  }
+
+  try {
+    $uri = [System.Uri]$Value
+    if ([string]::IsNullOrWhiteSpace($uri.Scheme) -or [string]::IsNullOrWhiteSpace($uri.Host)) {
+      return '<invalid>'
+    }
+
+    $portSuffix = if ($uri.IsDefaultPort -or $uri.Port -lt 1) { '' } else { ":$($uri.Port)" }
+    return "$($uri.Scheme)://$($uri.Host)$portSuffix"
+  } catch {
+    return '<invalid>'
+  }
+}
+
+function Resolve-WrapperProxyEnvironmentPlan {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [System.Collections.IDictionary]$Environment = [System.Environment]::GetEnvironmentVariables()
+  )
+
+  $presence = if ($Config.ContainsKey('proxyConfigPresence') -and ($Config.proxyConfigPresence -is [hashtable])) {
+    $Config.proxyConfigPresence
+  } else {
+    @{}
+  }
+
+  $plan = @{}
+  foreach ($definition in Get-WrapperProxyVariableDefinitions) {
+    $ambient = Get-EnvironmentVariableEntry -Names $definition.variables -Environment $Environment
+    $configured = $presence.ContainsKey($definition.configKey) -and [bool]$presence[$definition.configKey]
+    $configuredValue = Normalize-OptionalWrapperConfigString -Value $Config[$definition.configKey]
+
+    $source = 'unset'
+    $effectiveValue = $null
+    $clearRequested = $false
+
+    if ($configured) {
+      if ($null -ne $configuredValue) {
+        if ($configuredValue.Length -eq 0) {
+          $source = 'wrapperConfig'
+          $clearRequested = $true
+        } else {
+          $source = 'wrapperConfig'
+          $effectiveValue = $configuredValue
+        }
+      } elseif ($ambient.found) {
+        $source = 'ambientEnvironment'
+        $effectiveValue = $ambient.value
+      }
+    } elseif ($ambient.found) {
+      $source = 'ambientEnvironment'
+      $effectiveValue = $ambient.value
+    }
+
+    $plan[$definition.configKey] = @{
+      source            = $source
+      value             = $effectiveValue
+      clearRequested    = $clearRequested
+      configured        = $configured
+      matchedAmbientKey = $ambient.name
+      variables         = $definition.variables
+      redactUrl         = [bool]$definition.redactUrl
+    }
+  }
+
+  return $plan
+}
+
+function Set-WrapperProxyEnvironment {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [System.Collections.IDictionary]$Environment = [System.Environment]::GetEnvironmentVariables()
+  )
+
+  $plan = Resolve-WrapperProxyEnvironmentPlan -Config $Config -Environment $Environment
+  foreach ($definition in Get-WrapperProxyVariableDefinitions) {
+    $entry = $plan[$definition.configKey]
+    if ($entry.source -ne 'wrapperConfig') {
+      continue
+    }
+
+    foreach ($variableName in $definition.variables) {
+      if ($entry.clearRequested) {
+        [System.Environment]::SetEnvironmentVariable($variableName, $null, 'Process')
+      } else {
+        [System.Environment]::SetEnvironmentVariable($variableName, $entry.value, 'Process')
+      }
+    }
+  }
+
+  return $plan
+}
+
+function Get-WrapperProxyStatusReport {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [System.Collections.IDictionary]$Environment = [System.Environment]::GetEnvironmentVariables()
+  )
+
+  $plan = Resolve-WrapperProxyEnvironmentPlan -Config $Config -Environment $Environment
+  $report = @{}
+  foreach ($definition in Get-WrapperProxyVariableDefinitions) {
+    $entry = $plan[$definition.configKey]
+    $report[$definition.configKey] = @{
+      source         = $entry.source
+      value          = if ($definition.redactUrl) { Redact-ProxyUrl -Value $entry.value } else { $entry.value }
+      clearRequested = $entry.clearRequested
+    }
+  }
+
+  return $report
+}
+
+function New-EmptyWrapperProxyStatusReport {
+  $report = @{}
+  foreach ($definition in Get-WrapperProxyVariableDefinitions) {
+    $report[$definition.configKey] = @{
+      source         = 'unset'
+      value          = $null
+      clearRequested = $false
+    }
+  }
+
+  return $report
 }
 
 function Resolve-AbsolutePath {
@@ -576,6 +789,12 @@ function Assert-ServiceConfig {
   if ([string]::IsNullOrWhiteSpace($Config.logPolicy.mode)) {
     throw 'logPolicy.mode must not be empty.'
   }
+
+  foreach ($proxyField in @('httpProxy', 'httpsProxy', 'allProxy', 'noProxy')) {
+    if (($null -ne $Config[$proxyField]) -and -not ($Config[$proxyField] -is [string])) {
+      throw "$proxyField must be a string when provided."
+    }
+  }
 }
 
 function Get-ServiceConfig {
@@ -593,6 +812,14 @@ function Get-ServiceConfig {
   $rawConfig = ConvertTo-Hashtable -InputObject (Get-Content -LiteralPath $resolvedConfigPath -Raw | ConvertFrom-Json)
   $merged = Merge-Hashtable -Base (Get-DefaultServiceConfig) -Overlay $rawConfig
   $merged.serviceAccountMode = $merged.serviceAccountMode.ToString().Trim()
+  $merged.proxyConfigPresence = @{}
+  foreach ($definition in Get-WrapperProxyVariableDefinitions) {
+    $merged.proxyConfigPresence[$definition.configKey] = $rawConfig.ContainsKey($definition.configKey)
+    if (($null -ne $merged[$definition.configKey]) -and -not ($merged[$definition.configKey] -is [string])) {
+      throw "$($definition.configKey) must be a string when provided."
+    }
+    $merged[$definition.configKey] = Normalize-OptionalWrapperConfigString -Value $merged[$definition.configKey]
+  }
   Assert-ServiceConfig -Config $merged
 
   $merged.sourceConfigPath = $resolvedConfigPath
@@ -1691,11 +1918,13 @@ function Remove-GeneratedArtifacts {
 Export-ModuleMember -Function `
   Clear-RememberedServiceConfigSelection, `
   Get-CurrentWindowsIdentityName, `
+  Get-WrapperProxyStatusReport, `
   Get-TrayControllerLaunchArguments, `
   Get-TrayShortcutPath, `
   Ensure-Directory, `
   Ensure-WinSWBinary, `
   Get-EffectiveServiceAccountMode, `
+  New-EmptyWrapperProxyStatusReport, `
   Get-GatewayConfigValidationIssues, `
   Get-PortListeners, `
   Get-RememberedConfigMetadataPath, `
@@ -1725,7 +1954,9 @@ Export-ModuleMember -Function `
   Resolve-ServiceAccountPlan, `
   Resolve-ServiceConfig, `
   Resolve-ServiceConfigSelection, `
+  Resolve-WrapperProxyEnvironmentPlan, `
   Resolve-InspectionIdentityContext, `
+  Set-WrapperProxyEnvironment, `
   Stop-RecordedServiceProcessTree, `
   Test-IsBuiltInServiceAccount, `
   Test-ServiceAccountMatch, `
