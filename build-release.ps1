@@ -39,6 +39,7 @@ try {
     'build-release.ps1',
     'doctor.ps1',
     'install.ps1',
+    'invoke-tray-action.ps1',
     'reinstall-service-elevated.ps1',
     'restart.ps1',
     'run-gateway.ps1',
@@ -51,6 +52,7 @@ try {
     'status-service.ps1',
     'stop-gateway.ps1',
     'stop.ps1',
+    'tray-controller.ps1',
     'uninstall.ps1',
     'uninstall-service-elevated.ps1'
   )

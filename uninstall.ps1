@@ -45,6 +45,12 @@ try {
     [void](Clear-RememberedServiceConfigSelection)
   }
 
+  try {
+    [void](Remove-TrayStartupShortcut -Config $config)
+  } catch {
+    Write-Warning "Tray startup shortcut cleanup failed: $($_.Exception.Message)"
+  }
+
   Write-Host "Service '$($config.serviceName)' has been removed."
   if ($PurgeTools) {
     Write-Host 'Generated WinSW artifacts were purged.'
