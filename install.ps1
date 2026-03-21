@@ -75,6 +75,18 @@ try {
   Write-WinSWServiceXml -Config $config -ServiceAccountMode $serviceAccountPlan.effectiveMode -Credential $installCredential | Out-Null
 
   Invoke-WinSWCommand -Config $config -Command 'install'
+  try {
+    $restartTaskName = Register-ServiceRestartTask -Config $config
+  } catch {
+    try {
+      Invoke-WinSWCommand -Config $config -Command 'uninstall'
+    } catch {
+      Write-Warning "Service '$($config.serviceName)' was installed but restart task registration failed and automatic rollback also failed."
+    }
+
+    throw "Failed to register restart task for service '$($config.serviceName)': $($_.Exception.Message)"
+  }
+
   Invoke-WinSWCommand -Config $config -Command 'start'
 
   if (-not (Wait-ForServiceStatus -ServiceName $config.serviceName -DesiredStatus 'Running' -TimeoutSec 30)) {
@@ -107,6 +119,7 @@ try {
   Write-Host "Run as       : $($installedService.startName)"
   Write-Host "Port         : $($config.port)"
   Write-Host "WinSW home   : $($layout.generatedDirectory)"
+  Write-Host "Restart task : $restartTaskName"
   Write-Host "Health URL   : $($config.healthUrl)"
   Write-Host "Tray startup : $trayStatus"
   if ($health.ok) {

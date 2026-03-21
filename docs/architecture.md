@@ -12,15 +12,17 @@ This repository wraps the OpenClaw gateway in a Windows service package. The ups
 - `install.ps1`, `start.ps1`, `stop.ps1`, `restart.ps1`, `status.ps1`, `doctor.ps1`, `uninstall.ps1`: public operator commands
 - `run-gateway.ps1`: service host entrypoint invoked by WinSW
 - `stop-gateway.ps1`: targeted stop helper invoked by WinSW during service shutdown
+- `restart-service-task.ps1`: Scheduled Task bridge that turns OpenClaw's intentional Windows restart requests back into a WinSW service start
 
 ## Startup and Shutdown Lifecycle
 
 1. `install.ps1` loads config and resolves paths for the selected service identity.
-2. It downloads a pinned WinSW binary, validates SHA256, renders a service XML file, and installs the Windows service.
+2. It downloads a pinned WinSW binary, validates SHA256, renders a service XML file, registers the restart bridge task, and installs the Windows service.
 3. WinSW starts `powershell.exe`, which runs `run-gateway.ps1`.
-4. `run-gateway.ps1` writes runtime state, exports the OpenClaw environment variables, and runs `openclaw gateway run`.
+4. `run-gateway.ps1` writes runtime state, exports the OpenClaw environment variables, points `OPENCLAW_WINDOWS_TASK_NAME` at the wrapper-owned Scheduled Task, and runs `openclaw gateway run`.
 5. During stop or restart, WinSW calls `stop-gateway.ps1`.
 6. `stop-gateway.ps1` reads the recorded wrapper PID and stops only that exact process tree, first without force and then with a bounded forced fallback.
+7. If OpenClaw performs a full-process Windows restart, it triggers the Scheduled Task bridge, which waits for WinSW to finish stopping and then starts the Windows service again.
 
 ## Configuration Model and Precedence
 
@@ -51,6 +53,7 @@ This repository wraps the OpenClaw gateway in a Windows service package. The ups
 ## Failure Recovery
 
 - WinSW is configured with restart-on-failure actions.
+- Intentional Windows restarts are bridged through a wrapper-owned Scheduled Task under `\OpenClaw\<serviceName>-Restart`.
 - The wrapper removes the previous port-scan kill behavior and replaces it with exact process-tree shutdown.
 - `allowForceBind` is disabled by default; if enabled, `run-gateway.ps1` appends `--force` to `openclaw gateway run`.
 

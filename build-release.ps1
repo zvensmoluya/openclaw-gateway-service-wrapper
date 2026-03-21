@@ -42,6 +42,7 @@ try {
     'invoke-tray-action.ps1',
     'reinstall-service-elevated.ps1',
     'restart.ps1',
+    'restart-service-task.ps1',
     'run-gateway.ps1',
     'service-config.json',
     'service-config.local.example.json',
@@ -54,6 +55,7 @@ try {
     'stop-gateway.ps1',
     'stop.ps1',
     'tray-controller.ps1',
+    'tray-controller-launcher.vbs',
     'uninstall.ps1',
     'uninstall-service-elevated.ps1'
   )

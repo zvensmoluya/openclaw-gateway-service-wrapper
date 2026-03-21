@@ -36,6 +36,13 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 - Check the OpenClaw config referenced by `configPath`.
 - Verify the selected `stateDir` and `tempDir` are writable by the service account.
 
+## `status.ps1` or `doctor.ps1` Reports a Missing or Mismatched Restart Task
+
+- The wrapper expects an on-demand Scheduled Task at `\OpenClaw\<serviceName>-Restart`.
+- Run `schtasks /Query /TN "\OpenClaw\<serviceName>-Restart"` to confirm the task exists.
+- If the task is missing or points at a stale script path, reinstall the service so the wrapper can recreate the bridge.
+- Check `logs/<serviceName>.restart-task.log` for the last intentional restart attempt.
+
 ## `web_search`, `web_fetch`, or Skill Install Fails Behind a Proxy
 
 - Set wrapper-level proxy fields in `service-config.json` or your explicit wrapper config:

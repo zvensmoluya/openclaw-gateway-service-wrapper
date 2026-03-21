@@ -379,6 +379,13 @@ function Get-WindowsPowerShellExecutablePath {
   return (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
 }
 
+function Get-WindowsScriptHostExecutablePath {
+  [CmdletBinding()]
+  param()
+
+  return (Join-Path $env:WINDIR 'System32\wscript.exe')
+}
+
 function Get-CurrentUserStartupDirectory {
   [CmdletBinding()]
   param()
@@ -424,6 +431,37 @@ function Get-TrayControllerLaunchArguments {
     $resolvedConfigPath = Resolve-AbsolutePath -Path $ConfigPath -BasePath $script:RepoRoot
     $arguments += @(
       '-ConfigPath',
+      ('"{0}"' -f $resolvedConfigPath)
+    )
+  }
+
+  return ($arguments -join ' ')
+}
+
+function Get-TrayControllerLauncherPath {
+  [CmdletBinding()]
+  param(
+    [string]$LauncherPath = (Join-Path $script:RepoRoot 'tray-controller-launcher.vbs')
+  )
+
+  return (Resolve-AbsolutePath -Path $LauncherPath -BasePath $script:RepoRoot)
+}
+
+function Get-TrayControllerLauncherArguments {
+  [CmdletBinding()]
+  param(
+    [string]$LauncherPath = (Join-Path $script:RepoRoot 'tray-controller-launcher.vbs'),
+    [string]$ConfigPath
+  )
+
+  $resolvedLauncherPath = Get-TrayControllerLauncherPath -LauncherPath $LauncherPath
+  $arguments = @(
+    ('"{0}"' -f $resolvedLauncherPath)
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $resolvedConfigPath = Resolve-AbsolutePath -Path $ConfigPath -BasePath $script:RepoRoot
+    $arguments += @(
       ('"{0}"' -f $resolvedConfigPath)
     )
   }
@@ -1111,8 +1149,8 @@ function Install-TrayStartupShortcut {
   $shortcut = $null
   try {
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = Get-WindowsPowerShellExecutablePath
-    $shortcut.Arguments = Get-TrayControllerLaunchArguments -ConfigPath $ConfigPath
+    $shortcut.TargetPath = Get-WindowsScriptHostExecutablePath
+    $shortcut.Arguments = Get-TrayControllerLauncherArguments -ConfigPath $ConfigPath
     $shortcut.WorkingDirectory = $script:RepoRoot
     $shortcut.Description = "Open the $($Config.displayName) tray controller."
     $shortcut.IconLocation = "$([System.Environment]::SystemDirectory)\shell32.dll,44"
@@ -1169,6 +1207,303 @@ function Get-ServiceArtifactLayout {
     legacyXmlPath           = $legacyXmlPath
     stateFilePath           = $stateFilePath
   }
+}
+
+function New-EmptyServiceRestartTaskStatusReport {
+  param()
+
+  return @{
+    taskPath       = $null
+    taskName       = $null
+    fullTaskName   = $null
+    scriptPath     = $null
+    logPath        = $null
+    description    = $null
+    exists         = $false
+    state          = $null
+    matches        = $false
+    expectedAction = @{
+      execute   = $null
+      arguments = $null
+    }
+    actualAction   = @{
+      execute   = $null
+      arguments = $null
+    }
+  }
+}
+
+function Get-ServiceRestartTaskInfo {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $taskPath = '\OpenClaw\'
+  $taskName = "$($Config.serviceName)-Restart"
+  $fullTaskName = "$taskPath$taskName"
+  $scriptPath = Join-Path $script:RepoRoot 'restart-service-task.ps1'
+  $actionExecutable = Get-WindowsPowerShellExecutablePath
+  $actionArguments = Format-PowerShellCommandArguments -ScriptPath $scriptPath -ConfigPath $Config.sourceConfigPath
+  $logPath = Join-Path $Config.logsDirectory "$($Config.serviceName).restart-task.log"
+  $description = "Bridge intentional OpenClaw restarts back into the WinSW service '$($Config.serviceName)'."
+
+  return @{
+    taskPath         = $taskPath
+    taskName         = $taskName
+    fullTaskName     = $fullTaskName
+    scriptPath       = $scriptPath
+    logPath          = $logPath
+    description      = $description
+    actionExecutable = $actionExecutable
+    actionArguments  = $actionArguments
+  }
+}
+
+function Format-ServiceRestartTaskCommandLine {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskInfo
+  )
+
+  return ('"{0}" {1}' -f $TaskInfo.actionExecutable, $TaskInfo.actionArguments)
+}
+
+function Invoke-SchtasksCommand {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments,
+    [switch]$AllowFailure
+  )
+
+  $output = & schtasks.exe @Arguments 2>&1 | ForEach-Object { $_.ToString() }
+  $exitCode = $LASTEXITCODE
+  $text = ($output -join [Environment]::NewLine).Trim()
+
+  if (-not $AllowFailure -and $exitCode -ne 0) {
+    if ([string]::IsNullOrWhiteSpace($text)) {
+      throw "schtasks.exe failed with exit code $exitCode."
+    }
+
+    throw "schtasks.exe failed with exit code ${exitCode}: $text"
+  }
+
+  return @{
+    exitCode = $exitCode
+    output   = $text
+  }
+}
+
+function Get-ServiceRestartTaskStatusViaCom {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $info = Get-ServiceRestartTaskInfo -Config $Config
+  $report = New-EmptyServiceRestartTaskStatusReport
+  $report.taskPath = $info.taskPath
+  $report.taskName = $info.taskName
+  $report.fullTaskName = $info.fullTaskName
+  $report.scriptPath = $info.scriptPath
+  $report.logPath = $info.logPath
+  $report.description = $info.description
+  $report.expectedAction.execute = $info.actionExecutable
+  $report.expectedAction.arguments = $info.actionArguments
+
+  $service = $null
+  try {
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folderPath = $info.taskPath.TrimEnd('\')
+    if ([string]::IsNullOrWhiteSpace($folderPath)) {
+      $folderPath = '\'
+    }
+    $folder = $service.GetFolder($folderPath)
+    $task = $folder.GetTask($info.taskName)
+
+    if ($null -eq $task) {
+      return $report
+    }
+
+    $report.exists = $true
+    $report.state = $task.State.ToString()
+
+    [xml]$definition = $task.Xml
+    $commandNode = $definition.SelectSingleNode('/Task/Actions/Exec/Command')
+    $argumentsNode = $definition.SelectSingleNode('/Task/Actions/Exec/Arguments')
+
+    $report.actualAction.execute = if ($null -ne $commandNode) { $commandNode.InnerText } else { $null }
+    $report.actualAction.arguments = if ($null -ne $argumentsNode) { $argumentsNode.InnerText } else { $null }
+    $report.matches = (
+      (Test-ServiceRestartTaskExecutableMatch -Expected $info.actionExecutable -Actual $report.actualAction.execute) -and
+      [string]::Equals($info.actionArguments, $report.actualAction.arguments, [System.StringComparison]::OrdinalIgnoreCase)
+    )
+
+    return $report
+  } catch {
+    $message = $_.Exception.Message
+    $hresult = $_.Exception.HResult
+    if ($hresult -eq -2147024891 -or $message -match 'Access is denied') {
+      $report.exists = $true
+      $report.matches = $true
+      $report.state = 'Unknown'
+      return $report
+    }
+
+    return $report
+  } finally {
+    if ($null -ne $service) {
+      [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($service)
+    }
+  }
+}
+
+function Test-ServiceRestartTaskExecutableMatch {
+  param(
+    [AllowNull()]
+    [string]$Expected,
+    [AllowNull()]
+    [string]$Actual
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Expected) -or [string]::IsNullOrWhiteSpace($Actual)) {
+    return $false
+  }
+
+  $expectedFullPath = [System.IO.Path]::GetFullPath($Expected)
+  $actualNormalized = $Actual.Trim()
+
+  if ([System.IO.Path]::IsPathRooted($actualNormalized)) {
+    $actualFullPath = [System.IO.Path]::GetFullPath($actualNormalized)
+    if ([string]::Equals($expectedFullPath, $actualFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      return $true
+    }
+  }
+
+  return [string]::Equals(
+    [System.IO.Path]::GetFileName($expectedFullPath),
+    [System.IO.Path]::GetFileName($actualNormalized),
+    [System.StringComparison]::OrdinalIgnoreCase
+  )
+}
+
+function Get-ServiceRestartTaskStatus {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $info = Get-ServiceRestartTaskInfo -Config $Config
+  $report = New-EmptyServiceRestartTaskStatusReport
+  $report.taskPath = $info.taskPath
+  $report.taskName = $info.taskName
+  $report.fullTaskName = $info.fullTaskName
+  $report.scriptPath = $info.scriptPath
+  $report.logPath = $info.logPath
+  $report.description = $info.description
+  $report.expectedAction.execute = $info.actionExecutable
+  $report.expectedAction.arguments = $info.actionArguments
+
+  $task = $null
+  try {
+    $task = Get-ScheduledTask -TaskPath $info.taskPath -TaskName $info.taskName -ErrorAction Stop
+  } catch {
+    return (Get-ServiceRestartTaskStatusViaCom -Config $Config)
+  }
+
+  $report.exists = $true
+  $report.state = $task.State.ToString()
+
+  $action = $null
+  if ($null -ne $task.Actions) {
+    $actions = @($task.Actions)
+    if ($actions.Count -gt 0) {
+      $action = $actions[0]
+    }
+  }
+
+  if ($null -ne $action) {
+    $report.actualAction.execute = $action.Execute
+    $report.actualAction.arguments = $action.Arguments
+  }
+
+  $report.matches = (
+    (Test-ServiceRestartTaskExecutableMatch -Expected $info.actionExecutable -Actual $report.actualAction.execute) -and
+    [string]::Equals($info.actionArguments, $report.actualAction.arguments, [System.StringComparison]::OrdinalIgnoreCase)
+  )
+
+  return $report
+}
+
+function Register-ServiceRestartTask {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $info = Get-ServiceRestartTaskInfo -Config $Config
+  try {
+    $action = New-ScheduledTaskAction -Execute $info.actionExecutable -Argument $info.actionArguments -WorkingDirectory $script:RepoRoot
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+      -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries `
+      -StartWhenAvailable `
+      -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+
+    Register-ScheduledTask `
+      -TaskPath $info.taskPath `
+      -TaskName $info.taskName `
+      -Action $action `
+      -Principal $principal `
+      -Settings $settings `
+      -Description $info.description `
+      -Force | Out-Null
+  } catch {
+    $taskCommand = Format-ServiceRestartTaskCommandLine -TaskInfo $info
+    Invoke-SchtasksCommand -Arguments @(
+      '/Create',
+      '/TN', $info.fullTaskName,
+      '/SC', 'ONCE',
+      '/ST', '23:59',
+      '/RU', 'SYSTEM',
+      '/RL', 'HIGHEST',
+      '/TR', $taskCommand,
+      '/F'
+    ) | Out-Null
+  }
+
+  return $info.fullTaskName
+}
+
+function Remove-ServiceRestartTask {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $info = Get-ServiceRestartTaskInfo -Config $Config
+  try {
+    Get-ScheduledTask -TaskPath $info.taskPath -TaskName $info.taskName -ErrorAction Stop | Out-Null
+  } catch {
+    $query = Invoke-SchtasksCommand -Arguments @('/Query', '/TN', $info.fullTaskName) -AllowFailure
+    if ($query.exitCode -ne 0) {
+      return $false
+    }
+
+    Invoke-SchtasksCommand -Arguments @('/Delete', '/TN', $info.fullTaskName, '/F') | Out-Null
+    return $true
+  }
+
+  Unregister-ScheduledTask -TaskPath $info.taskPath -TaskName $info.taskName -Confirm:$false
+  return $true
 }
 
 function Get-ServiceExecutablePathFromPathName {
@@ -1918,6 +2253,11 @@ function Remove-GeneratedArtifacts {
 Export-ModuleMember -Function `
   Clear-RememberedServiceConfigSelection, `
   Get-CurrentWindowsIdentityName, `
+  New-EmptyServiceRestartTaskStatusReport, `
+  Get-TrayControllerLauncherArguments, `
+  Get-TrayControllerLauncherPath, `
+  Get-ServiceRestartTaskInfo, `
+  Get-ServiceRestartTaskStatus, `
   Get-WrapperProxyStatusReport, `
   Get-TrayControllerLaunchArguments, `
   Get-TrayShortcutPath, `
@@ -1944,9 +2284,11 @@ Export-ModuleMember -Function `
   Invoke-HealthCheck, `
   Invoke-WinSWCommand, `
   Install-TrayStartupShortcut, `
+  Register-ServiceRestartTask, `
   Read-RememberedServiceConfigSelection, `
   Read-RunState, `
   Remove-GeneratedArtifacts, `
+  Remove-ServiceRestartTask, `
   Remove-TrayStartupShortcut, `
   Render-WinSWServiceXml, `
   Resolve-ManagedExecutablePath, `

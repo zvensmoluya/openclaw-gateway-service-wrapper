@@ -206,9 +206,17 @@ function Invoke-StatusReport {
     $arguments += @('-ConfigPath', $ConfigPath)
   }
 
-  $output = & (Get-WindowsPowerShellExecutablePath) @arguments 2>&1
-  $exitCode = $LASTEXITCODE
-  $text = (($output | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+  try {
+    $output = & (Get-WindowsPowerShellExecutablePath) @arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = (($output | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+  } catch {
+    return @{
+      report       = $null
+      exitCode     = 1
+      errorMessage = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback 'status.ps1 invocation failed.'
+    }
+  }
 
   if ([string]::IsNullOrWhiteSpace($text)) {
     return @{

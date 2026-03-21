@@ -42,6 +42,7 @@ try {
       serviceName = $selection.rememberedServiceName
       installed   = $service.installed
       service     = $service
+      restartTask = New-EmptyServiceRestartTaskStatusReport
       proxy       = New-EmptyWrapperProxyStatusReport
       health      = @{
         ok         = $false
@@ -83,6 +84,7 @@ try {
   $config.configSource = $selection.configSource
   $config.rememberedPath = $selection.rememberedPath
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $restartTask = Get-ServiceRestartTaskStatus -Config $config
   $proxy = Get-WrapperProxyStatusReport -Config $config
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
   $warnings = [System.Collections.ArrayList]::new()
@@ -119,6 +121,12 @@ try {
     $issues += "Service '$($config.serviceName)' is not running."
   }
 
+  if ($service.installed -and -not $restartTask.exists) {
+    $issues += "Restart task '$($restartTask.fullTaskName)' is missing. Reinstall the service to restore intentional restart bridging."
+  } elseif ($service.installed -and -not $restartTask.matches) {
+    $issues += "Restart task '$($restartTask.fullTaskName)' does not match the expected wrapper action. Reinstall the service to restore intentional restart bridging."
+  }
+
   if (-not $health.ok) {
     $issues += "Health endpoint is not healthy: $($health.error)"
   }
@@ -127,6 +135,7 @@ try {
     serviceName = $config.serviceName
     installed   = $service.installed
     service     = $service
+    restartTask = $restartTask
     proxy       = $proxy
     health      = $health
     healthUrl   = $config.healthUrl
@@ -155,6 +164,9 @@ try {
     Write-Host "Installed    : $($service.installed)"
     Write-Host "Status       : $($service.status)"
     Write-Host "Start type   : $($service.startType)"
+    Write-Host "Restart task : $($restartTask.fullTaskName)"
+    Write-Host "Task status  : $($restartTask.state)"
+    Write-Host "Task matches : $($restartTask.matches)"
     Write-Host "HTTP proxy   : $($proxy.httpProxy.value) [$($proxy.httpProxy.source)]"
     Write-Host "HTTPS proxy  : $($proxy.httpsProxy.value) [$($proxy.httpsProxy.source)]"
     Write-Host "ALL proxy    : $($proxy.allProxy.value) [$($proxy.allProxy.source)]"
@@ -185,7 +197,7 @@ try {
     }
   }
 
-  if ($service.installed -and $service.status -eq 'Running' -and $health.ok) {
+  if ($service.installed -and $service.status -eq 'Running' -and $health.ok -and $issues.Count -eq 0) {
     exit 0
   }
 

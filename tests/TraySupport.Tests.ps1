@@ -31,6 +31,13 @@ Describe 'tray controller support' {
     $arguments | Should -Match 'service-config\.local\.json'
   }
 
+  It 'builds launcher arguments for the tray shortcut' {
+    $arguments = Get-TrayControllerLauncherArguments -LauncherPath (Join-Path $script:repoRoot 'tray-controller-launcher.vbs') -ConfigPath '.\service-config.local.json'
+
+    $arguments | Should -Match 'tray-controller-launcher\.vbs'
+    $arguments | Should -Match 'service-config\.local\.json'
+  }
+
   It 'creates and removes the tray startup shortcut' {
     $startupDirectory = Join-Path $env:TEMP "openclaw-startup-$([guid]::NewGuid().ToString('N'))"
     $script:testPaths += $startupDirectory
@@ -47,9 +54,9 @@ Describe 'tray controller support' {
     $shell = New-Object -ComObject WScript.Shell
     try {
       $shortcut = $shell.CreateShortcut($shortcutPath)
-      $shortcut.TargetPath | Should -Match 'powershell\.exe$'
-      $shortcut.Arguments | Should -Match 'tray-controller\.ps1'
-      $shortcut.Arguments | Should -Match '-WindowStyle Hidden'
+      $shortcut.TargetPath | Should -Match 'wscript\.exe$'
+      $shortcut.Arguments | Should -Match 'tray-controller-launcher\.vbs'
+      $shortcut.Arguments | Should -Not -Match 'powershell\.exe'
     } finally {
       if ($null -ne $shortcut) {
         [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut)

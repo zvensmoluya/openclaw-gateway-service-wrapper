@@ -54,6 +54,7 @@ try {
         port                = $null
         bind                = $null
       }
+      restartTask = New-EmptyServiceRestartTaskStatusReport
       proxy = New-EmptyWrapperProxyStatusReport
       identity = $identity
       warnings = $emptyWarnings
@@ -98,6 +99,7 @@ try {
   $config.rememberedPath = $selection.rememberedPath
   $layout = Get-ServiceArtifactLayout -Config $config
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
+  $restartTask = Get-ServiceRestartTaskStatus -Config $config
   $proxy = Get-WrapperProxyStatusReport -Config $config
   $reportedWinSWExecutable = if ($service.installed -and -not [string]::IsNullOrWhiteSpace($service.pathName)) {
     Get-ServiceExecutablePathFromPathName -PathName $service.pathName
@@ -158,6 +160,12 @@ try {
     $issues += "Service '$($config.serviceName)' is not running."
   }
 
+  if ($service.installed -and -not $restartTask.exists) {
+    $issues += "Restart task '$($restartTask.fullTaskName)' is missing. Reinstall the service to restore intentional restart bridging."
+  } elseif ($service.installed -and -not $restartTask.matches) {
+    $issues += "Restart task '$($restartTask.fullTaskName)' does not match the expected wrapper action. Reinstall the service to restore intentional restart bridging."
+  }
+
   if ($service.installed -and -not $health.ok) {
     $issues += "Health endpoint is not healthy: $($health.error)"
   }
@@ -179,6 +187,7 @@ try {
       port               = $config.port
       bind               = $config.bind
     }
+    restartTask = $restartTask
     proxy = $proxy
     identity = $identity
     warnings = $warnings
@@ -209,6 +218,9 @@ try {
     Write-Host "OpenClaw command  : $openclawCommand"
     Write-Host "WinSW executable  : $reportedWinSWExecutable"
     Write-Host "WinSW XML         : $reportedWinSWXml"
+    Write-Host "Restart task      : $($restartTask.fullTaskName)"
+    Write-Host "Task status       : $($restartTask.state)"
+    Write-Host "Task matches      : $($restartTask.matches)"
     Write-Host "HTTP proxy        : $($proxy.httpProxy.value) [$($proxy.httpProxy.source)]"
     Write-Host "HTTPS proxy       : $($proxy.httpsProxy.value) [$($proxy.httpsProxy.source)]"
     Write-Host "ALL proxy         : $($proxy.allProxy.value) [$($proxy.allProxy.source)]"

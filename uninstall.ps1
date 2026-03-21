@@ -31,6 +31,12 @@ try {
     }
   }
 
+  try {
+    [void](Remove-ServiceRestartTask -Config $config)
+  } catch {
+    Write-Warning "Restart task cleanup failed: $($_.Exception.Message)"
+  }
+
   if ($PurgeTools) {
     Remove-GeneratedArtifacts -Config $config
   }

@@ -18,6 +18,7 @@ try {
   $identityContext = Get-ServiceIdentityContext -Mode 'currentUser'
   $config = Get-ServiceConfig -ConfigPath $ConfigPath -IdentityContext $identityContext
   $openClawCommand = Resolve-OpenClawCommandPath -Config $config -IdentityContext $identityContext
+  $restartTask = Get-ServiceRestartTaskInfo -Config $config
 
   Ensure-Directory -Path $config.logsDirectory
   Ensure-Directory -Path $config.runtimeStateDirectory
@@ -40,7 +41,7 @@ try {
   $env:OPENCLAW_CONFIG_PATH = $config.gatewayConfigPath
   $env:OPENCLAW_GATEWAY_PORT = [string]$config.port
   $env:OPENCLAW_SYSTEMD_UNIT = 'openclaw-gateway.service'
-  $env:OPENCLAW_WINDOWS_TASK_NAME = 'OpenClaw Gateway'
+  $env:OPENCLAW_WINDOWS_TASK_NAME = $restartTask.fullTaskName
   $env:OPENCLAW_SERVICE_MARKER = 'openclaw'
   $env:OPENCLAW_SERVICE_KIND = 'gateway'
   $env:USERPROFILE = $runtimeHome
@@ -63,6 +64,7 @@ try {
   Write-Host "Config path      : $($config.gatewayConfigPath)"
   Write-Host "Wrapper PID      : $PID"
   Write-Host "Port             : $($config.port)"
+  Write-Host "Restart task     : $($restartTask.fullTaskName)"
 
   Write-RunState -Config $config -State @{
     serviceName      = $config.serviceName

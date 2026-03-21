@@ -35,6 +35,8 @@ If you use `serviceAccountMode: localSystem`, do not pass `-Credential`. That co
 
 After a successful install, the wrapper remembers the wrapper config path in `.runtime/active-config.json`.
 
+Install also registers an on-demand Scheduled Task at `\OpenClaw\<serviceName>-Restart`. OpenClaw uses that task for intentional full-process Windows restarts, and the task bridges back into the WinSW-managed service lifecycle.
+
 By default, install also creates a Startup shortcut for `tray-controller.ps1` in the current Windows user's Startup folder. The Windows Service and the tray controller are separate layers: the service is machine background infrastructure, while the tray icon is a per-sign-in control surface.
 
 If the machine needs an outbound proxy for service traffic, set `httpProxy`, `httpsProxy`, `allProxy`, and/or `noProxy` in the wrapper config before installing or reinstalling the service. The wrapper exports those values to the OpenClaw child process at runtime.
@@ -91,6 +93,8 @@ Both commands report:
 - `identity.expectedStartName`: the Windows account the wrapper expects
 - `identity.actualStartName`: the Windows account the service is actually using
 - `identity.installLayout`: `generated` or `legacyRoot`
+- `restartTask.fullTaskName`: the expected Scheduled Task bridge path
+- `restartTask.matches`: whether the registered task action still matches the wrapper's expected helper script
 - `proxy.httpProxy` / `proxy.httpsProxy` / `proxy.allProxy` / `proxy.noProxy`: redacted wrapper-side proxy inputs and whether each value came from wrapper config or the ambient environment
 
 `doctor.ps1` also validates that the OpenClaw config file referenced by `configPath` exists and contains valid JSON.
@@ -98,9 +102,10 @@ Both commands report:
 ## Files Created at Runtime
 
 - `tools/winsw/<serviceName>/`: generated WinSW executable and XML
+- Windows Scheduled Task `\OpenClaw\<serviceName>-Restart`: intentional restart bridge back into the service
 - `.runtime/active-config.json`: remembered wrapper config metadata
 - `.runtime/<serviceName>.state.json`: runtime state
-- `logs/`: WinSW log files
+- `logs/`: WinSW logs plus `<serviceName>.restart-task.log` for restart-bridge audit output
 
 ## Operational Notes
 

@@ -152,6 +152,27 @@ Describe 'status.ps1' {
         installLayout    = 'generated'
       }
     }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $true
+        state          = 'Ready'
+        matches        = $true
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+      }
+    }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -202,6 +223,27 @@ Describe 'status.ps1' {
           actualStartName   = 'CONTOSO\svc-openclaw'
           matches           = $true
           installLayout     = 'generated'
+        }
+      }
+      Mock Get-ServiceRestartTaskStatus {
+        @{
+          taskPath       = '\OpenClaw\'
+          taskName       = "$($config.serviceName)-Restart"
+          fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+          scriptPath     = 'restart-service-task.ps1'
+          logPath        = "logs\$($config.serviceName).restart-task.log"
+          description    = 'restart bridge'
+          exists         = $true
+          state          = 'Ready'
+          matches        = $true
+          expectedAction = @{
+            execute   = 'powershell.exe'
+            arguments = 'expected'
+          }
+          actualAction   = @{
+            execute   = 'powershell.exe'
+            arguments = 'expected'
+          }
         }
       }
       Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
@@ -255,6 +297,27 @@ Describe 'status.ps1' {
         installLayout    = 'generated'
       }
     }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $true
+        state          = 'Ready'
+        matches        = $true
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+      }
+    }
     Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -263,5 +326,133 @@ Describe 'status.ps1' {
 
     @($report.warnings).Count | Should -Be 0
     @($report.issues).Count | Should -Be 0
+  }
+
+  It 'reports a missing restart task for an installed service' {
+    $configPath = New-StatusTestConfig
+    $script:testPaths += $configPath
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'CONTOSO\svc-openclaw'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode    = 'credential'
+        deprecatedAlias   = $false
+        expectedStartName = 'CONTOSO\svc-openclaw'
+        actualStartName   = 'CONTOSO\svc-openclaw'
+        matches           = $true
+        installLayout     = 'generated'
+      }
+    }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $false
+        state          = $null
+        matches        = $false
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = $null
+          arguments = $null
+        }
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+    $output = & $script:statusScript -ConfigPath $configPath -Json
+    $LASTEXITCODE | Should -Be 1
+    $report = $output | ConvertFrom-Json
+
+    @($report.issues) | Should -Contain "Restart task '\OpenClaw\$($config.serviceName)-Restart' is missing. Reinstall the service to restore intentional restart bridging."
+  }
+
+  It 'reports a mismatched restart task action for an installed service' {
+    $configPath = New-StatusTestConfig
+    $script:testPaths += $configPath
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'CONTOSO\svc-openclaw'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode    = 'credential'
+        deprecatedAlias   = $false
+        expectedStartName = 'CONTOSO\svc-openclaw'
+        actualStartName   = 'CONTOSO\svc-openclaw'
+        matches           = $true
+        installLayout     = 'generated'
+      }
+    }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $true
+        state          = 'Ready'
+        matches        = $false
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = 'powershell.exe'
+          arguments = 'wrong'
+        }
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+    $output = & $script:statusScript -ConfigPath $configPath -Json
+    $LASTEXITCODE | Should -Be 1
+    $report = $output | ConvertFrom-Json
+
+    @($report.issues) | Should -Contain "Restart task '\OpenClaw\$($config.serviceName)-Restart' does not match the expected wrapper action. Reinstall the service to restore intentional restart bridging."
   }
 }
