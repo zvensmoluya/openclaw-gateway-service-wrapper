@@ -598,6 +598,11 @@ function Resolve-ServiceAccountPlan {
       }
     }
     'localSystem' {
+      if ($null -ne $resolvedCredential) {
+        throw "serviceAccountMode 'localSystem' does not accept -Credential. Remove -Credential or use serviceAccountMode 'credential' or 'currentUser'."
+      }
+
+      $resolvedCredential = $null
       $expectedStartName = 'LocalSystem'
     }
     default {
@@ -605,7 +610,7 @@ function Resolve-ServiceAccountPlan {
     }
   }
 
-  if (($null -ne $resolvedCredential) -and [string]::IsNullOrEmpty($resolvedCredential.GetNetworkCredential().Password)) {
+  if (($configuredMode -ne 'localSystem') -and ($null -ne $resolvedCredential) -and [string]::IsNullOrEmpty($resolvedCredential.GetNetworkCredential().Password)) {
     throw "Windows services cannot log on with a blank password for account '$($resolvedCredential.UserName)'. Set a password on that account or use serviceAccountMode 'localSystem'."
   }
 
@@ -1124,7 +1129,11 @@ function Render-WinSWServiceXml {
   }
 
   $serviceAccountBlock = ''
-  if ($null -ne $Credential) {
+  if (($ServiceAccountMode -eq 'localSystem') -and ($null -ne $Credential)) {
+    throw "serviceAccountMode 'localSystem' must not render a WinSW serviceaccount block."
+  }
+
+  if (($ServiceAccountMode -in @('currentUser', 'credential')) -and ($null -ne $Credential)) {
     $credentialParts = Split-ServiceCredentialUser -UserName $Credential.UserName
     $serviceAccountBlock = @(
       '  <serviceaccount>'

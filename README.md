@@ -65,7 +65,7 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 - Default mode is `credential`.
 - `credential` is the recommended Windows Service mode. It installs the service under an explicit Windows account and prompts for credentials when they are not supplied on the command line.
 - `currentUser` is still accepted as a deprecated compatibility alias. It means "prompt for the current Windows user's credential and install the service under that account." It does not mean "run inside the current interactive user session."
-- `localSystem` installs the service as the built-in `LocalSystem` account without prompting for credentials. When you want that service to use files from a regular user profile, set `stateDir`, `configPath`, `tempDir`, and `openclawCommand` to absolute user-owned paths.
+- `localSystem` installs the service as the built-in `LocalSystem` account without prompting for credentials. It must not be combined with `-Credential`. When you want that service to use files from a regular user profile, set `stateDir`, `configPath`, `tempDir`, and `openclawCommand` to absolute user-owned paths.
 - To install under another account, pass a credential at install time:
 
 ```powershell

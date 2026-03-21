@@ -129,7 +129,18 @@ Describe 'Service identity planning' {
     $plan.deprecatedAlias | Should -BeFalse
     $plan.requiresCredential | Should -BeFalse
     $plan.expectedStartName | Should -Be 'LocalSystem'
+    $plan.credential | Should -Be $null
     $plan.identityContext.profileRoot | Should -Match 'System32\\Config\\SystemProfile$'
+  }
+
+  It 'rejects explicit credentials in LocalSystem mode' {
+    $configPath = New-ServiceIdentityConfigFile -Overrides @{ serviceAccountMode = 'localSystem' }
+    $script:testPaths += $configPath
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $secure = ConvertTo-SecureString 'example-password' -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential('CONTOSO\svc-openclaw', $secure)
+
+    { Resolve-ServiceAccountPlan -Config $config -Credential $credential -CurrentWindowsIdentityName $script:currentWindowsIdentityName } | Should -Throw "*serviceAccountMode 'localSystem' does not accept -Credential*"
   }
 
   It 'rejects blank-password credentials before attempting service install' {

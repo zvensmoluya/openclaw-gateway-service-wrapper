@@ -46,4 +46,21 @@ Describe 'Render-WinSWServiceXml' {
 
     { Render-WinSWServiceXml -Config $config -ServiceAccountMode 'credential' } | Should -Throw '*Credential mode requires a PSCredential.*'
   }
+
+  It 'does not render a service account block for LocalSystem mode' {
+    $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+    $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
+    $xml = Render-WinSWServiceXml -Config $config -ServiceAccountMode 'localSystem'
+
+    $xml | Should -Not -Match '<serviceaccount>'
+  }
+
+  It 'rejects credentials for LocalSystem mode' {
+    $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+    $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
+    $secure = ConvertTo-SecureString 'example-password' -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential('example-user', $secure)
+
+    { Render-WinSWServiceXml -Config $config -ServiceAccountMode 'localSystem' -Credential $credential } | Should -Throw "*serviceAccountMode 'localSystem' must not render a WinSW serviceaccount block.*"
+  }
 }

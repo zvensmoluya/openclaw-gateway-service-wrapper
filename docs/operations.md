@@ -25,6 +25,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 
 If you intentionally use the deprecated `currentUser` alias, `install.ps1` prompts for the current Windows user's password and installs the service under that same account.
 
+If you use `serviceAccountMode: localSystem`, do not pass `-Credential`. That combination is rejected before installation so the wrapper cannot accidentally install the service under the explicit credential instead of `LocalSystem`.
+
 After a successful install, the wrapper remembers the wrapper config path in `.runtime/active-config.json`.
 
 ## Start, Stop, Restart

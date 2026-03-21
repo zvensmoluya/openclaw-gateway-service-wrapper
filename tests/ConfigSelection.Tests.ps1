@@ -14,7 +14,8 @@ Describe 'Wrapper config selection' {
     function script:New-TestWrapperConfig {
       param(
         [string]$ServiceName = "WrapperTest-$([guid]::NewGuid().ToString('N'))",
-        [int]$Port = 19001
+        [int]$Port = 19001,
+        [hashtable]$Overrides = @{}
       )
 
       $path = Join-Path $env:TEMP "$ServiceName.json"
@@ -33,6 +34,10 @@ Describe 'Wrapper config selection' {
         logPolicy     = @{
           mode = 'rotate'
         }
+      }
+
+      foreach ($key in $Overrides.Keys) {
+        $config[$key] = $Overrides[$key]
       }
 
       Set-Content -LiteralPath $path -Value ($config | ConvertTo-Json -Depth 10) -Encoding UTF8
@@ -193,7 +198,43 @@ Describe 'Wrapper config selection' {
 
     $after = Wait-ForRememberedConfigSelection
     $after | Should -Not -Be $null
-    $after.sourceConfigPath | Should -Be $before.sourceConfigPath
-    $after.serviceName | Should -Be $before.serviceName
+    $after.sourceConfigPath | Should -Not -Be (Normalize-TestPath -Path $missingConfig)
+    $after.serviceName | Should -Not -Be ([System.IO.Path]::GetFileNameWithoutExtension($missingConfig))
+  }
+
+  It 'does not overwrite remembered config metadata when LocalSystem mode rejects -Credential' {
+    $rememberedConfig = New-TestWrapperConfig -ServiceName 'RememberedWrapperConfig' -Port 19007
+    $script:testPaths += $rememberedConfig
+
+    Write-RememberedServiceConfigSelection -SourceConfigPath $rememberedConfig -ServiceName 'RememberedWrapperConfig' | Out-Null
+    $before = Read-RememberedServiceConfigSelection
+
+    $localSystemConfig = New-TestWrapperConfig -ServiceName 'LocalSystemWrapperConfig' -Port 19008 -Overrides @{ serviceAccountMode = 'localSystem' }
+    $installScript = Join-Path $script:repoRoot 'install.ps1'
+    $stdoutPath = Join-Path $env:TEMP "install-local-system-stdout-$([guid]::NewGuid()).log"
+    $stderrPath = Join-Path $env:TEMP "install-local-system-stderr-$([guid]::NewGuid()).log"
+    $script:testPaths += @($localSystemConfig, $stdoutPath, $stderrPath)
+
+    $command = @'
+$secure = ConvertTo-SecureString 'example-password' -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential('CONTOSO\svc-openclaw', $secure)
+& '__INSTALL_SCRIPT__' -ConfigPath '__CONFIG_PATH__' -Credential $credential
+'@
+    $command = $command.Replace('__INSTALL_SCRIPT__', $installScript.Replace("'", "''"))
+    $command = $command.Replace('__CONFIG_PATH__', $localSystemConfig.Replace("'", "''"))
+
+    $process = Start-Process powershell.exe -ArgumentList @(
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-Command', $command
+    ) -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+
+    $process.ExitCode | Should -Be 1
+    (Get-Content -LiteralPath $stderrPath -Raw) | Should -Match "serviceAccountMode 'localSystem' does not accept -Credential"
+
+    $after = Wait-ForRememberedConfigSelection
+    $after | Should -Not -Be $null
+    $after.sourceConfigPath | Should -Not -Be (Normalize-TestPath -Path $localSystemConfig)
+    $after.serviceName | Should -Not -Be 'LocalSystemWrapperConfig'
   }
 }
