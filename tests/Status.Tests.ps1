@@ -72,6 +72,26 @@ Describe 'status.ps1' {
       $report = $null
       if ($output) { }
     }
+
+    function script:New-DefaultRecoveryContext {
+      param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ServiceDetails
+      )
+
+      return @{
+        status               = $ServiceDetails.status
+        isPending            = $false
+        isStopPending        = $false
+        isStartPending       = $false
+        isStuckStopping      = $false
+        hasPortListeners     = $false
+        hasResidualProcesses = $false
+        needsStartRecovery   = $false
+        listenerProcessIds   = @()
+        service              = $ServiceDetails
+      }
+    }
   }
 
   BeforeEach {
@@ -140,6 +160,8 @@ Describe 'status.ps1' {
     }
 
     Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
     Mock Invoke-HealthCheck { $health }
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
@@ -213,6 +235,8 @@ Describe 'status.ps1' {
       }
 
       Mock Get-ServiceDetails { $serviceDetails }
+      Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+      Mock Get-ServiceRecoveryIssueMessage { $null }
       Mock Invoke-HealthCheck { $health }
       Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
       Mock Get-ServiceIdentityReport {
@@ -285,6 +309,8 @@ Describe 'status.ps1' {
     }
 
     Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
     Mock Invoke-HealthCheck { $health }
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
@@ -350,6 +376,8 @@ Describe 'status.ps1' {
     }
 
     Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
     Mock Invoke-HealthCheck { $health }
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
@@ -414,6 +442,8 @@ Describe 'status.ps1' {
     }
 
     Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
     Mock Invoke-HealthCheck { $health }
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
@@ -483,6 +513,8 @@ Describe 'status.ps1' {
     }
 
     Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
     Mock Invoke-HealthCheck { $health }
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
@@ -554,6 +586,8 @@ Describe 'status.ps1' {
     }
 
     Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
     Mock Invoke-HealthCheck { $health }
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
@@ -597,5 +631,172 @@ Describe 'status.ps1' {
     $fastReport.health.source | Should -Be 'cache'
     $fastReport.lastDeepObservedAt | Should -Not -BeNullOrEmpty
     $fastReport.state | Should -Be 'degraded'
+  }
+
+  It 'uses tray title for tray snapshot display text' {
+    $runtimeRoot = Join-Path $env:TEMP "tray-title-runtime-$([guid]::NewGuid().ToString('N'))"
+    $logsRoot = Join-Path $env:TEMP "tray-title-logs-$([guid]::NewGuid().ToString('N'))"
+    $configPath = New-StatusTestConfig -Overrides @{
+      displayName      = 'OpenClaw Display'
+      runtimeStateDir  = $runtimeRoot
+      logsDir          = $logsRoot
+      tray             = @{
+        title = 'OpenClaw Console'
+      }
+    }
+    $script:testPaths += @($configPath, $runtimeRoot, $logsRoot)
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $serviceDetails = @{
+      installed = $true
+      name      = $config.serviceName
+      status    = 'Running'
+      startType = 'Automatic'
+      processId = 1
+      startName = 'CONTOSO\svc-openclaw'
+      pathName  = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+    }
+    $health = @{
+      ok         = $true
+      statusCode = 200
+      body       = '{"ok":true}'
+      error      = $null
+    }
+
+    Mock Get-ServiceDetails { $serviceDetails }
+    Mock Get-ServiceRecoveryContext { New-DefaultRecoveryContext -ServiceDetails $serviceDetails }
+    Mock Get-ServiceRecoveryIssueMessage { $null }
+    Mock Invoke-HealthCheck { $health }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode    = 'credential'
+        deprecatedAlias   = $false
+        expectedStartName = 'CONTOSO\svc-openclaw'
+        actualStartName   = 'CONTOSO\svc-openclaw'
+        matches           = $true
+        installLayout     = 'generated'
+      }
+    }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $true
+        state          = 'Ready'
+        matches        = $true
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
+
+    $output = & $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep
+    $LASTEXITCODE | Should -Be 0
+    $report = $output | ConvertFrom-Json
+
+    $report.displayName | Should -Be 'OpenClaw Console'
+    $report.tooltipText | Should -Be 'OpenClaw Console: Running'
+    $report.detail | Should -Be 'OpenClaw Console is healthy.'
+  }
+
+  It 'reports a stuck StopPending service as pending instead of healthy' {
+    $runtimeRoot = Join-Path $env:TEMP "tray-pending-runtime-$([guid]::NewGuid().ToString('N'))"
+    $logsRoot = Join-Path $env:TEMP "tray-pending-logs-$([guid]::NewGuid().ToString('N'))"
+    $configPath = New-StatusTestConfig -Overrides @{
+      runtimeStateDir = $runtimeRoot
+      logsDir         = $logsRoot
+    }
+    $script:testPaths += @($configPath, $runtimeRoot, $logsRoot)
+
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $stuckMessage = "Service '$($config.serviceName)' is stuck in StopPending while the gateway process is still alive. Clear the residual service process tree before starting again."
+    $recoveryContext = @{
+      status               = 'StopPending'
+      isPending            = $true
+      isStopPending        = $true
+      isStuckStopping      = $true
+      hasPortListeners     = $true
+      hasResidualProcesses = $true
+      listenerProcessIds   = @(38744)
+      service              = @{
+        installed         = $true
+        name              = $config.serviceName
+        status            = 'StopPending'
+        startType         = 'Automatic'
+        processId         = 32032
+        startName         = 'LocalSystem'
+        pathName          = ('"{0}"' -f (Join-Path $script:repoRoot 'tools\winsw\OpenClawService\OpenClawService.exe'))
+        transitionStatus  = 'StopPending'
+        pending           = $true
+        stuckStopping     = $true
+        wrapperProcessId  = 26524
+        listenerProcessIds = @(38744)
+      }
+    }
+
+    Mock Get-ServiceRecoveryContext { $recoveryContext }
+    Mock Invoke-HealthCheck {
+      @{
+        ok         = $true
+        statusCode = 200
+        body       = '{"ok":true}'
+        error      = $null
+      }
+    }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceIdentityReport {
+      @{
+        configuredMode    = 'credential'
+        deprecatedAlias   = $false
+        expectedStartName = 'LocalSystem'
+        actualStartName   = 'LocalSystem'
+        matches           = $true
+        installLayout     = 'generated'
+      }
+    }
+    Mock Get-ServiceRestartTaskStatus {
+      @{
+        taskPath       = '\OpenClaw\'
+        taskName       = "$($config.serviceName)-Restart"
+        fullTaskName   = "\OpenClaw\$($config.serviceName)-Restart"
+        scriptPath     = 'restart-service-task.ps1'
+        logPath        = "logs\$($config.serviceName).restart-task.log"
+        description    = 'restart bridge'
+        exists         = $true
+        state          = 'Ready'
+        matches        = $true
+        expectedAction = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+        actualAction   = @{
+          execute   = 'powershell.exe'
+          arguments = 'expected'
+        }
+      }
+    }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
+    Mock Get-ServiceRecoveryIssueMessage { $stuckMessage }
+
+    $output = & $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep
+    $LASTEXITCODE | Should -Be 1
+    $report = $output | ConvertFrom-Json
+
+    $report.state | Should -Be 'pending'
+    $report.summary | Should -Be 'Stuck stopping'
+    $report.detail | Should -Be $stuckMessage
+    $report.health.source | Should -Be 'live'
+    @($report.issues) | Should -Contain $stuckMessage
   }
 }

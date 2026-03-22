@@ -70,6 +70,25 @@ Proxy semantics:
 
 These proxy fields belong to the wrapper config, not upstream `openclaw.json`. They are intended to cover service-wide outbound networking such as `web_search`, `web_fetch`, and helper CLIs started by OpenClaw. Module-specific settings such as `channels.telegram.proxy` remain upstream OpenClaw settings and are separate from wrapper proxy injection.
 
+## Tray Fields
+
+- `tray.title`: optional tray display name; defaults to `displayName`
+- `tray.notifications`: `all`, `errorsOnly`, or `off`
+- `tray.refresh.fastSeconds`: background fast-refresh cadence when the tray is degraded or stale
+- `tray.refresh.deepSeconds`: full refresh cadence
+- `tray.refresh.menuSeconds`: max age before opening the menu requests a refresh
+- `tray.icons.default`: optional default `.ico` path for the tray icon
+- `tray.icons.healthy` / `degraded` / `unhealthy` / `stopped` / `error` / `loading` / `notInstalled`: optional state-specific `.ico` paths
+
+Tray rules:
+
+- `tray` is intentionally lightweight. Menu items and their order stay fixed.
+- Icon paths may be absolute or relative to the wrapper repository root.
+- Icon lookup order is `tray.icons.<state>` -> `tray.icons.default` -> bundled `assets/tray/*.ico` -> Windows system icon fallback.
+- `tray.refresh.fastSeconds` must be between `15` and `300`.
+- `tray.refresh.deepSeconds` must be between `60` and `900`.
+- `tray.refresh.menuSeconds` must be between `5` and `60`.
+
 ## WinSW Fields
 
 - `winswVersion`: pinned WinSW release version
@@ -131,6 +150,15 @@ These example files are overlays, not full manifests. They rely on repository de
   "stateDir": "%USERPROFILE%\\.openclaw",
   "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json",
   "tempDir": "%LOCALAPPDATA%\\Temp",
+  "tray": {
+    "title": "OpenClaw Service",
+    "notifications": "all",
+    "refresh": {
+      "fastSeconds": 30,
+      "deepSeconds": 180,
+      "menuSeconds": 10
+    }
+  },
   "serviceAccountMode": "credential",
   "openclawCommand": "",
   "allowForceBind": false,

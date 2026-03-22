@@ -90,7 +90,7 @@ function Get-TrayStateFromStatusReport {
 
   if ($null -eq $Report) {
     $resolvedErrorMessage = if ([string]::IsNullOrWhiteSpace($ErrorMessage)) { 'No status report was returned.' } else { $ErrorMessage }
-    $snapshot = New-TrayStatusSnapshot -ServiceName 'OpenClaw' -Installed $false -Service $null -Health $null -RefreshKind 'deep' -ErrorMessage $resolvedErrorMessage
+    $snapshot = New-TrayStatusSnapshot -ServiceName 'OpenClaw' -DisplayName 'OpenClaw' -Installed $false -Service $null -Health $null -RefreshKind 'deep' -ErrorMessage $resolvedErrorMessage
   } else {
     $reportTable = ConvertTo-PlainHashtable -InputObject $Report
     $config = if ($null -ne $reportTable -and $reportTable.ContainsKey('config')) { $reportTable.config } else { @{} }
@@ -105,6 +105,7 @@ function Get-TrayStateFromStatusReport {
     }
     $snapshot = New-TrayStatusSnapshot `
       -ServiceName "$($reportTable.serviceName)" `
+      -DisplayName $(if ($reportTable.ContainsKey('displayName')) { "$($reportTable.displayName)" } else { "$($reportTable.serviceName)" }) `
       -Installed ([bool]$reportTable.installed) `
       -Service $reportTable.service `
       -Health $reportTable.health `
@@ -125,18 +126,20 @@ function Get-TrayStateFromStatusReport {
 
 function New-LoadingTraySnapshot {
   param(
-    [string]$ServiceName = 'OpenClaw'
+    [string]$ServiceName = 'OpenClaw',
+    [string]$DisplayName = $ServiceName
   )
 
   return @{
     serviceName        = $ServiceName
+    displayName        = $DisplayName
     observedAt         = (Get-Date).ToString('o')
     refreshKind        = 'fast'
     lastDeepObservedAt = $null
     state              = 'loading'
     summary            = 'Starting...'
     detail             = 'Tray controller is starting.'
-    tooltipText        = "${ServiceName}: Starting..."
+    tooltipText        = "${DisplayName}: Starting..."
     stale              = $false
     staleReason        = $null
     config             = @{
@@ -210,6 +213,21 @@ function Initialize-TrayContext {
   $script:trayContext = Resolve-TrayControllerContext -ConfigPath $ConfigPath -CurrentWindowsIdentityName $currentWindowsIdentityName -AllowInvalidRemembered
   $script:trayPaths = $script:trayContext.paths
   $script:trayLogPath = $script:trayPaths.logPath
+  $script:trayConfig = if ($null -ne $script:trayContext.config -and $script:trayContext.config.ContainsKey('tray') -and ($script:trayContext.config.tray -is [hashtable])) {
+    $script:trayContext.config.tray
+  } else {
+    $fallbackTrayConfig = Get-DefaultTrayConfig
+    $fallbackTrayConfig.title = $script:trayContext.serviceName
+    $fallbackTrayConfig
+  }
+  $script:trayDisplayName = if ([string]::IsNullOrWhiteSpace($script:trayConfig.title)) {
+    $script:trayContext.serviceName
+  } else {
+    $script:trayConfig.title
+  }
+  $script:fastRefreshInterval = [TimeSpan]::FromSeconds($script:trayConfig.refresh.fastSeconds)
+  $script:deepRefreshInterval = [TimeSpan]::FromSeconds($script:trayConfig.refresh.deepSeconds)
+  $script:menuRefreshInterval = [TimeSpan]::FromSeconds($script:trayConfig.refresh.menuSeconds)
   Ensure-Directory -Path $script:trayPaths.runtimeStateDirectory
   Ensure-Directory -Path $script:trayPaths.logsDirectory
 }
@@ -230,6 +248,67 @@ function Write-TrayLog {
     Ensure-Directory -Path (Split-Path -Parent $script:trayLogPath)
     Add-Content -LiteralPath $script:trayLogPath -Value ("{0} [{1}] {2}" -f (Get-Date).ToString('o'), $Level, $Message)
   } catch {
+  }
+}
+
+function Get-TrayDisplayName {
+  param(
+    [AllowNull()]
+    [hashtable]$Snapshot
+  )
+
+  if ($null -ne $Snapshot -and -not [string]::IsNullOrWhiteSpace("$($Snapshot.displayName)")) {
+    return "$($Snapshot.displayName)"
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($script:trayDisplayName)) {
+    return $script:trayDisplayName
+  }
+
+  return $script:trayContext.serviceName
+}
+
+function Get-TrayBalloonTitle {
+  return (Get-TrayDisplayName -Snapshot $script:lastSnapshot)
+}
+
+function Get-TrayIconCandidatePaths {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$State
+  )
+
+  $paths = @()
+  if ($null -ne $script:trayConfig -and $script:trayConfig.ContainsKey('icons') -and ($script:trayConfig.icons -is [hashtable])) {
+    if (-not [string]::IsNullOrWhiteSpace("$($script:trayConfig.icons[$State])")) {
+      $paths += "$($script:trayConfig.icons[$State])"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace("$($script:trayConfig.icons.default)")) {
+      $paths += "$($script:trayConfig.icons.default)"
+    }
+  }
+
+  $paths += @(
+    (Join-Path $PSScriptRoot "assets\tray\openclaw-$State.ico"),
+    (Join-Path $PSScriptRoot 'assets\tray\openclaw.ico'),
+    (Join-Path $PSScriptRoot "assets\openclaw-$State.ico"),
+    (Join-Path $PSScriptRoot 'assets\openclaw.ico')
+  )
+
+  return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+}
+
+function Should-ShowTrayBalloon {
+  param(
+    [System.Windows.Forms.ToolTipIcon]$Icon = [System.Windows.Forms.ToolTipIcon]::Info
+  )
+
+  $notifications = if ($null -ne $script:trayConfig) { "$($script:trayConfig.notifications)" } else { 'all' }
+  switch ($notifications) {
+    'off' { return $false }
+    'errorsOnly' { return ($Icon -ne [System.Windows.Forms.ToolTipIcon]::Info) }
+    default { return $true }
   }
 }
 
@@ -274,14 +353,7 @@ function Get-NotifyIconForState {
     return $script:customIcons[$State]
   }
 
-  $candidatePaths = @(
-    (Join-Path $PSScriptRoot "assets\tray\openclaw-$State.ico"),
-    (Join-Path $PSScriptRoot 'assets\tray\openclaw.ico'),
-    (Join-Path $PSScriptRoot "assets\openclaw-$State.ico"),
-    (Join-Path $PSScriptRoot 'assets\openclaw.ico')
-  )
-
-  foreach ($candidatePath in $candidatePaths) {
+  foreach ($candidatePath in (Get-TrayIconCandidatePaths -State $State)) {
     if (-not (Test-Path -LiteralPath $candidatePath)) {
       continue
     }
@@ -299,6 +371,7 @@ function Get-NotifyIconForState {
     'healthy' { return [System.Drawing.SystemIcons]::Information }
     'degraded' { return [System.Drawing.SystemIcons]::Warning }
     'unhealthy' { return [System.Drawing.SystemIcons]::Warning }
+    'pending' { return (Get-NotifyIconForState -State 'loading') }
     'stopped' { return [System.Drawing.SystemIcons]::Application }
     'notInstalled' { return [System.Drawing.SystemIcons]::Application }
     'loading' { return [System.Drawing.SystemIcons]::Application }
@@ -314,6 +387,10 @@ function Show-TrayBalloon {
     [string]$Text,
     [System.Windows.Forms.ToolTipIcon]$Icon = [System.Windows.Forms.ToolTipIcon]::Info
   )
+
+  if (-not (Should-ShowTrayBalloon -Icon $Icon)) {
+    return
+  }
 
   $script:notifyIcon.BalloonTipTitle = $Title
   $script:notifyIcon.BalloonTipText = $Text
@@ -373,17 +450,21 @@ function Get-SummaryMenuText {
     [hashtable]$Snapshot
   )
 
-  if (-not [string]::IsNullOrWhiteSpace("$($Snapshot.issuesSummary)")) {
-    return "Issue: $($Snapshot.issuesSummary)"
-  }
-
-  if (-not [string]::IsNullOrWhiteSpace("$($Snapshot.warningsSummary)")) {
-    return "Warning: $($Snapshot.warningsSummary)"
-  }
-
   $refreshText = Get-RefreshStatusText
   if (-not [string]::IsNullOrWhiteSpace($refreshText)) {
     return "Info: $refreshText"
+  }
+
+  switch ("$($Snapshot.state)") {
+    'pending' {
+      return 'Info: Recovery may be required before starting again.'
+    }
+    'degraded' {
+      return 'Info: Attention needed.'
+    }
+    'unhealthy' {
+      return 'Info: Health check is failing.'
+    }
   }
 
   return "Info: $($Snapshot.summaryLine)"
@@ -395,10 +476,11 @@ function Refresh-TrayPresentation {
   }
 
   $snapshot = $script:lastSnapshot
-  $script:statusMenuItem.Text = "Status: $($snapshot.summary)"
+  $displayName = Get-TrayDisplayName -Snapshot $snapshot
+  $script:statusMenuItem.Text = "${displayName}: $($snapshot.summary)"
   $script:statusMenuItem.ToolTipText = "$($snapshot.detail)"
   $script:updatedMenuItem.Text = Get-UpdatedMenuText -Snapshot $snapshot
-  $script:updatedMenuItem.ToolTipText = "Last deep refresh: $(Format-TrayTimestamp -Value "$($snapshot.lastDeepObservedAt)")"
+  $script:updatedMenuItem.ToolTipText = "Last deep refresh for ${displayName}: $(Format-TrayTimestamp -Value "$($snapshot.lastDeepObservedAt)")"
   $script:summaryMenuItem.Text = Get-SummaryMenuText -Snapshot $snapshot
   $script:summaryMenuItem.ToolTipText = "$($snapshot.detail)"
 
@@ -407,10 +489,15 @@ function Refresh-TrayPresentation {
   $script:restartMenuItem.Enabled = ([bool]$snapshot.actions.canRestart) -and -not $script:isActionBusy
   $script:refreshMenuItem.Enabled = -not $script:isActionBusy
   $script:notifyIcon.Icon = Get-NotifyIconForState -State "$($snapshot.state)"
-  $script:notifyIcon.Text = if ($snapshot.tooltipText.Length -gt 63) {
-    $snapshot.tooltipText.Substring(0, 63)
+  $tooltipText = if ([string]::IsNullOrWhiteSpace("$($snapshot.tooltipText)")) {
+    "${displayName}: $($snapshot.summary)"
   } else {
-    $snapshot.tooltipText
+    "$($snapshot.tooltipText)"
+  }
+  $script:notifyIcon.Text = if ($tooltipText.Length -gt 63) {
+    $tooltipText.Substring(0, 63)
+  } else {
+    $tooltipText
   }
 }
 
@@ -421,6 +508,12 @@ function Apply-TraySnapshot {
   )
 
   $script:lastSnapshot = ConvertTo-PlainHashtable -InputObject $Snapshot
+  if ([string]::IsNullOrWhiteSpace("$($script:lastSnapshot.displayName)")) {
+    $script:lastSnapshot.displayName = Get-TrayDisplayName -Snapshot $null
+    if (-not [string]::IsNullOrWhiteSpace("$($script:lastSnapshot.summary)")) {
+      $script:lastSnapshot.tooltipText = "$($script:lastSnapshot.displayName): $($script:lastSnapshot.summary)"
+    }
+  }
   Refresh-TrayPresentation
 }
 
@@ -439,13 +532,17 @@ function Queue-RefreshKind {
     [string]$Kind
   )
 
-  if ($Kind -eq 'deep' -or $script:queuedRefreshKind -eq $null) {
+  if ($script:queuedRefreshKind -eq $null) {
     $script:queuedRefreshKind = $Kind
     return
   }
 
-  if ($script:queuedRefreshKind -ne 'deep') {
-    $script:queuedRefreshKind = $Kind
+  if ($script:queuedRefreshKind -eq $Kind -or $script:queuedRefreshKind -eq 'deep') {
+    return
+  }
+
+  if ($Kind -eq 'deep') {
+    $script:queuedRefreshKind = 'deep'
   }
 }
 
@@ -504,12 +601,24 @@ function Request-TrayRefresh {
     [string]$Reason
   )
 
+  if ($null -ne $script:refreshProcess -and $script:refreshProcess.HasExited) {
+    Complete-RefreshIfReady
+  }
+
   if ($script:isActionBusy) {
     Queue-RefreshKind -Kind $Kind
     return
   }
 
   if ($null -ne $script:refreshProcess -and -not $script:refreshProcess.HasExited) {
+    if ($script:refreshKind -eq 'deep') {
+      return
+    }
+
+    if ($script:refreshKind -eq $Kind) {
+      return
+    }
+
     Queue-RefreshKind -Kind $Kind
     return
   }
@@ -528,6 +637,14 @@ function Cleanup-RefreshArtifacts {
   $script:refreshErrorPath = $null
 }
 
+function Cleanup-ActionArtifacts {
+  if (-not [string]::IsNullOrWhiteSpace($script:actionResultPath) -and (Test-Path -LiteralPath $script:actionResultPath)) {
+    Remove-Item -LiteralPath $script:actionResultPath -Force
+  }
+
+  $script:actionResultPath = $null
+}
+
 function Start-QueuedRefreshIfNeeded {
   if ([string]::IsNullOrWhiteSpace($script:queuedRefreshKind)) {
     return
@@ -538,12 +655,48 @@ function Start-QueuedRefreshIfNeeded {
   Request-TrayRefresh -Kind $queuedKind -Reason 'queued'
 }
 
+function Get-LastRefreshCompletionTime {
+  param(
+    [ValidateSet('fast', 'deep')]
+    [string]$Kind
+  )
+
+  $completedAt = if ($Kind -eq 'deep') { $script:lastDeepCompletedAt } else { $script:lastFastCompletedAt }
+  if ($null -ne $completedAt) {
+    return $completedAt
+  }
+
+  if ($null -eq $script:lastSnapshot) {
+    return $null
+  }
+
+  if ($Kind -eq 'deep') {
+    return (ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.lastDeepObservedAt)")
+  }
+
+  return (ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.observedAt)")
+}
+
+function Get-CurrentSnapshotAge {
+  if ($null -eq $script:lastSnapshot) {
+    return $null
+  }
+
+  $observedAt = ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.observedAt)"
+  if ($null -eq $observedAt) {
+    return $null
+  }
+
+  return ((Get-Date) - $observedAt)
+}
+
 function Complete-RefreshIfReady {
   if ($null -eq $script:refreshProcess -or -not $script:refreshProcess.HasExited) {
     return
   }
 
   $currentKind = $script:refreshKind
+  $script:refreshProcess.WaitForExit()
   $stdout = if (Test-Path -LiteralPath $script:refreshOutputPath) { Get-Content -LiteralPath $script:refreshOutputPath -Raw } else { '' }
   $stderr = if (Test-Path -LiteralPath $script:refreshErrorPath) { Get-Content -LiteralPath $script:refreshErrorPath -Raw } else { '' }
   $exitCode = $script:refreshProcess.ExitCode
@@ -566,7 +719,7 @@ function Complete-RefreshIfReady {
     if ($script:startPhase -and $currentKind -eq 'deep') {
       $script:startPhase = $false
       if ($snapshot.state -eq 'error' -and -not $script:startupBalloonShown) {
-        Show-TrayBalloon -Title 'OpenClaw Tray' -Text "$($snapshot.detail)" -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+        Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text "$($snapshot.detail)" -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
         $script:startupBalloonShown = $true
       }
     }
@@ -578,12 +731,12 @@ function Complete-RefreshIfReady {
       $staleSnapshot = Set-TrayStatusSnapshotStale -Snapshot $script:lastSnapshot -Reason $failureMessage -RefreshKind $currentKind
       Apply-TraySnapshot -Snapshot $staleSnapshot
     } else {
-      $errorSnapshot = New-TrayStatusSnapshot -ServiceName $script:trayContext.serviceName -Installed $false -Service $null -Health $null -RefreshKind $currentKind -ErrorMessage $failureMessage
+      $errorSnapshot = New-TrayStatusSnapshot -ServiceName $script:trayContext.serviceName -DisplayName $script:trayDisplayName -Installed $false -Service $null -Health $null -RefreshKind $currentKind -ErrorMessage $failureMessage
       Apply-TraySnapshot -Snapshot $errorSnapshot
     }
 
     if ($script:startPhase -and $currentKind -eq 'deep' -and -not $script:startupBalloonShown) {
-      Show-TrayBalloon -Title 'OpenClaw Tray' -Text $failureMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $failureMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
       $script:startupBalloonShown = $true
       $script:startPhase = $false
     }
@@ -597,12 +750,62 @@ function Complete-RefreshIfReady {
   }
 }
 
+function Complete-ActionIfReady {
+  if ($null -eq $script:actionProcess -or -not $script:actionProcess.HasExited) {
+    return
+  }
+
+  $script:actionProcess.WaitForExit()
+  $actionName = $script:actionName
+  $exitCode = $script:actionProcess.ExitCode
+  $resultMessage = $null
+
+  try {
+    if (Test-Path -LiteralPath $script:actionResultPath) {
+      $result = Get-Content -LiteralPath $script:actionResultPath -Raw | ConvertFrom-Json
+      $resultMessage = "$($result.message)"
+    }
+
+    if ($exitCode -eq 0) {
+      if ([string]::IsNullOrWhiteSpace($resultMessage)) {
+        $resultMessage = "Service action '$actionName' completed."
+      }
+
+      Write-TrayLog -Message "Tray action '$actionName' completed successfully."
+      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $resultMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Info)
+    } else {
+      if ([string]::IsNullOrWhiteSpace($resultMessage)) {
+        $resultMessage = "Service action '$actionName' failed."
+      }
+
+      Write-TrayLog -Level 'ERROR' -Message "Tray action '$actionName' failed: $resultMessage"
+      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $resultMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+    }
+  } catch {
+    $message = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback "Service action '$actionName' failed."
+    Write-TrayLog -Level 'ERROR' -Message "Tray action '$actionName' failed: $message"
+    Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $message -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+  } finally {
+    Cleanup-ActionArtifacts
+    $script:actionProcess.Dispose()
+    $script:actionProcess = $null
+    $script:actionName = $null
+    $script:isActionBusy = $false
+    Refresh-TrayPresentation
+    Request-TrayRefresh -Kind 'deep' -Reason "post-$actionName"
+  }
+}
+
 function Should-RequestFastRefresh {
   if ($null -eq $script:lastSnapshot) {
     return $false
   }
 
-  $reference = ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.observedAt)"
+  if ($script:lastSnapshot.state -eq 'healthy' -and -not [bool]$script:lastSnapshot.stale) {
+    return $false
+  }
+
+  $reference = Get-LastRefreshCompletionTime -Kind 'fast'
   if ($null -eq $reference) {
     return $true
   }
@@ -619,7 +822,7 @@ function Should-RequestDeepRefresh {
     return $true
   }
 
-  $reference = ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.lastDeepObservedAt)"
+  $reference = Get-LastRefreshCompletionTime -Kind 'deep'
   if ($null -eq $reference) {
     return $true
   }
@@ -667,6 +870,8 @@ function Invoke-TrayAction {
   )
 
   if ($script:isActionBusy) {
+    Write-TrayLog -Level 'WARN' -Message "Tray action '$Action' ignored because another action is already running."
+    Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text 'Another tray action is already in progress.' -Icon ([System.Windows.Forms.ToolTipIcon]::Warning)
     return
   }
 
@@ -695,53 +900,33 @@ function Invoke-TrayAction {
     }
 
     Write-TrayLog -Message "Starting tray action '$Action'."
-    $process = Start-Process -FilePath (Get-WindowsPowerShellExecutablePath) `
+    $script:actionProcess = Start-Process -FilePath (Get-WindowsPowerShellExecutablePath) `
       -ArgumentList (ConvertTo-ArgumentString -Arguments $arguments) `
       -Verb RunAs `
       -WindowStyle Hidden `
-      -PassThru `
-      -Wait
-
-    $exitCode = $process.ExitCode
-    $resultMessage = $null
-    if (Test-Path -LiteralPath $resultPath) {
-      $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
-      $resultMessage = "$($result.message)"
-    }
-
-    if ($exitCode -eq 0) {
-      if ([string]::IsNullOrWhiteSpace($resultMessage)) {
-        $resultMessage = "Service action '$Action' completed."
-      }
-
-      Write-TrayLog -Message "Tray action '$Action' completed successfully."
-      Show-TrayBalloon -Title 'OpenClaw Service' -Text $resultMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Info)
-      return
-    }
-
-    if ([string]::IsNullOrWhiteSpace($resultMessage)) {
-      $resultMessage = "Service action '$Action' failed."
-    }
-
-    Write-TrayLog -Level 'ERROR' -Message "Tray action '$Action' failed: $resultMessage"
-    Show-TrayBalloon -Title 'OpenClaw Service' -Text $resultMessage -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+      -PassThru
+    $script:actionName = $Action
+    $script:actionResultPath = $resultPath
+    Refresh-TrayPresentation
   } catch {
     if (Test-IsElevationCanceled -Exception $_.Exception) {
       Write-TrayLog -Level 'WARN' -Message "Tray action '$Action' was canceled at the UAC prompt."
-      Show-TrayBalloon -Title 'OpenClaw Service' -Text 'Action canceled at the UAC prompt.' -Icon ([System.Windows.Forms.ToolTipIcon]::Warning)
+      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text 'Action canceled at the UAC prompt.' -Icon ([System.Windows.Forms.ToolTipIcon]::Warning)
     } else {
       $message = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback "Service action '$Action' failed."
       Write-TrayLog -Level 'ERROR' -Message "Tray action '$Action' failed: $message"
-      Show-TrayBalloon -Title 'OpenClaw Service' -Text $message -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
+      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $message -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
     }
   } finally {
-    if (Test-Path -LiteralPath $resultPath) {
-      Remove-Item -LiteralPath $resultPath -Force
-    }
+    if ($null -eq $script:actionProcess) {
+      if (Test-Path -LiteralPath $resultPath) {
+        Remove-Item -LiteralPath $resultPath -Force
+      }
 
-    $script:isActionBusy = $false
-    Refresh-TrayPresentation
-    Request-TrayRefresh -Kind 'deep' -Reason "post-$Action"
+      $script:isActionBusy = $false
+      Refresh-TrayPresentation
+      Request-TrayRefresh -Kind 'deep' -Reason "post-$Action"
+    }
   }
 }
 
@@ -752,6 +937,8 @@ if ($NoRun) {
 $script:trayContext = $null
 $script:trayPaths = $null
 $script:trayLogPath = $null
+$script:trayConfig = $null
+$script:trayDisplayName = $null
 $script:trayMutex = $null
 $script:trayMutexName = $null
 $script:ownsTrayMutex = $false
@@ -760,15 +947,18 @@ $script:refreshProcess = $null
 $script:refreshKind = $null
 $script:refreshOutputPath = $null
 $script:refreshErrorPath = $null
+$script:actionProcess = $null
+$script:actionName = $null
+$script:actionResultPath = $null
 $script:queuedRefreshKind = $null
 $script:lastRefreshRequestAt = $null
 $script:lastFastRequestAt = $null
 $script:lastDeepRequestAt = $null
 $script:lastFastCompletedAt = $null
 $script:lastDeepCompletedAt = $null
-$script:fastRefreshInterval = [TimeSpan]::FromSeconds(15)
-$script:deepRefreshInterval = [TimeSpan]::FromSeconds(60)
-$script:menuRefreshInterval = [TimeSpan]::FromSeconds(5)
+$script:fastRefreshInterval = [TimeSpan]::FromSeconds(30)
+$script:deepRefreshInterval = [TimeSpan]::FromSeconds(180)
+$script:menuRefreshInterval = [TimeSpan]::FromSeconds(10)
 $script:isActionBusy = $false
 $script:startPhase = $true
 $script:startupBalloonShown = $false
@@ -819,7 +1009,7 @@ $script:notifyIcon.Visible = $true
 
 $initialSnapshot = Read-InitialTraySnapshot
 if ($null -eq $initialSnapshot) {
-  $initialSnapshot = New-LoadingTraySnapshot -ServiceName $script:trayContext.serviceName
+  $initialSnapshot = New-LoadingTraySnapshot -ServiceName $script:trayContext.serviceName -DisplayName $script:trayDisplayName
 }
 
 Apply-TraySnapshot -Snapshot $initialSnapshot
@@ -837,21 +1027,24 @@ $script:exitMenuItem.add_Click({
     }
   }
 
+  Cleanup-ActionArtifacts
   $script:notifyIcon.Visible = $false
   $script:applicationContext.ExitThread()
 })
 $script:contextMenu.add_Opening({
-  $reference = if ($null -ne $script:lastSnapshot) { ConvertFrom-IsoDateTime -Value "$($script:lastSnapshot.observedAt)" } else { $null }
-  if ($null -eq $reference -or (((Get-Date) - $reference) -ge $script:menuRefreshInterval)) {
-    Request-TrayRefresh -Kind 'fast' -Reason 'menu-opening'
-  }
-
   if (Should-RequestDeepRefresh) {
     Request-TrayRefresh -Kind 'deep' -Reason 'menu-opening'
+    return
+  }
+
+  $age = Get-CurrentSnapshotAge
+  if ($null -eq $age -or $age -ge $script:menuRefreshInterval) {
+    Request-TrayRefresh -Kind 'fast' -Reason 'menu-opening'
   }
 })
 $script:refreshTimer.Interval = 1000
 $script:refreshTimer.add_Tick({
+  Complete-ActionIfReady
   Complete-RefreshIfReady
   Invoke-ScheduledRefresh
 })
@@ -876,6 +1069,11 @@ try {
   Cleanup-RefreshArtifacts
   if ($null -ne $script:refreshProcess) {
     $script:refreshProcess.Dispose()
+  }
+
+  Cleanup-ActionArtifacts
+  if ($null -ne $script:actionProcess) {
+    $script:actionProcess.Dispose()
   }
 
   if ($script:ownsTrayMutex -and $null -ne $script:trayMutex) {

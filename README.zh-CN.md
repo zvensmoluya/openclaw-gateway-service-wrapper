@@ -61,6 +61,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 - `tray-controller.ps1` 是会话级 companion，不是对 Windows Service 的替代。
 - 服务可以在开机后、用户登录前就已经运行；托盘图标会在安装它的那个用户登录后出现。
 - 托盘菜单提供 `Start`、`Stop`、`Restart`、`Refresh`、`Exit Tray`。
+- wrapper 配置现在支持轻量 `tray` 对象，可设置托盘标题、通知策略、刷新频率和可选图标路径。
+- 仓库内置默认托盘图标位于 `assets/tray/`，图标查找顺序为 `tray.icons.<state>`、`tray.icons.default`、内置资产、最后才回退到 Windows 系统图标。
 - `Stop` 只会停止服务，不会把服务启动类型改成禁用。
 - `Exit Tray` 只会关闭当前登录会话里的托盘图标，不会停止服务。
 - 托盘里的服务控制动作会先请求 UAC 提权，再通过 `invoke-tray-action.ps1` 调用现有生命周期脚本。

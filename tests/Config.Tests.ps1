@@ -200,4 +200,122 @@ Describe 'Get-ServiceConfig' {
       [System.Environment]::SetEnvironmentVariable('HTTP_PROXY', $originalHttp, 'Process')
     }
   }
+
+  It 'applies tray defaults and resolves tray overrides' {
+    $tempConfig = Join-Path $env:TEMP 'openclaw-wrapper-test-tray-config.json'
+    @'
+{
+  "displayName": "OpenClaw Local",
+  "tray": {
+    "title": "  OpenClaw Local Tray  ",
+    "notifications": "errorsOnly",
+    "refresh": {
+      "fastSeconds": 45,
+      "deepSeconds": 300,
+      "menuSeconds": 12
+    },
+    "icons": {
+      "default": "assets\\tray\\openclaw.ico",
+      "unhealthy": "assets\\tray\\openclaw-unhealthy.ico"
+    }
+  },
+  "logPolicy": {
+    "mode": "rotate"
+  }
+}
+'@ | Set-Content -LiteralPath $tempConfig -Encoding UTF8
+
+    try {
+      $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+      $config = Get-ServiceConfig -ConfigPath $tempConfig -IdentityContext $identity
+
+      $config.tray.title | Should -Be 'OpenClaw Local Tray'
+      $config.tray.notifications | Should -Be 'errorsOnly'
+      $config.tray.refresh.fastSeconds | Should -Be 45
+      $config.tray.refresh.deepSeconds | Should -Be 300
+      $config.tray.refresh.menuSeconds | Should -Be 12
+      $config.tray.icons.default | Should -Be (Join-Path $repoRoot 'assets\tray\openclaw.ico')
+      $config.tray.icons.unhealthy | Should -Be (Join-Path $repoRoot 'assets\tray\openclaw-unhealthy.ico')
+      $config.tray.icons.healthy | Should -Be $null
+    } finally {
+      if (Test-Path -LiteralPath $tempConfig) {
+        Remove-Item -LiteralPath $tempConfig -Force
+      }
+    }
+  }
+
+  It 'defaults tray title to displayName when omitted' {
+    $tempConfig = Join-Path $env:TEMP 'openclaw-wrapper-test-tray-default-title.json'
+    @'
+{
+  "displayName": "OpenClaw Display",
+  "logPolicy": {
+    "mode": "rotate"
+  }
+}
+'@ | Set-Content -LiteralPath $tempConfig -Encoding UTF8
+
+    try {
+      $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+      $config = Get-ServiceConfig -ConfigPath $tempConfig -IdentityContext $identity
+
+      $config.tray.title | Should -Be 'OpenClaw Display'
+      $config.tray.notifications | Should -Be 'all'
+      $config.tray.refresh.fastSeconds | Should -Be 30
+      $config.tray.refresh.deepSeconds | Should -Be 180
+      $config.tray.refresh.menuSeconds | Should -Be 10
+    } finally {
+      if (Test-Path -LiteralPath $tempConfig) {
+        Remove-Item -LiteralPath $tempConfig -Force
+      }
+    }
+  }
+
+  It 'rejects invalid tray notification values' {
+    $tempConfig = Join-Path $env:TEMP 'openclaw-wrapper-test-tray-invalid-notifications.json'
+    @'
+{
+  "tray": {
+    "notifications": "verbose"
+  },
+  "logPolicy": {
+    "mode": "rotate"
+  }
+}
+'@ | Set-Content -LiteralPath $tempConfig -Encoding UTF8
+
+    try {
+      $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+      { Get-ServiceConfig -ConfigPath $tempConfig -IdentityContext $identity } | Should -Throw '*tray.notifications*'
+    } finally {
+      if (Test-Path -LiteralPath $tempConfig) {
+        Remove-Item -LiteralPath $tempConfig -Force
+      }
+    }
+  }
+
+  It 'rejects out-of-range tray refresh values' {
+    $tempConfig = Join-Path $env:TEMP 'openclaw-wrapper-test-tray-invalid-refresh.json'
+    @'
+{
+  "tray": {
+    "refresh": {
+      "fastSeconds": 5
+    }
+  },
+  "logPolicy": {
+    "mode": "rotate"
+  }
+}
+'@ | Set-Content -LiteralPath $tempConfig -Encoding UTF8
+
+    try {
+      $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+      { Get-ServiceConfig -ConfigPath $tempConfig -IdentityContext $identity } | Should -Throw '*tray.refresh.fastSeconds*'
+    } finally {
+      if (Test-Path -LiteralPath $tempConfig) {
+        Remove-Item -LiteralPath $tempConfig -Force
+      }
+    }
+  }
 }

@@ -61,6 +61,8 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 - `tray-controller.ps1` is a session-level companion, not a replacement for the Windows Service.
 - The service can start at boot even before anyone signs in; the tray icon appears after the installing user signs in.
 - The tray menu provides `Start`, `Stop`, `Restart`, `Refresh`, and `Exit Tray`.
+- Wrapper config can now include a lightweight `tray` object for tray title, notification policy, refresh cadence, and optional custom icon paths.
+- Bundled tray icons are shipped in `assets/tray/`, and custom icon lookup prefers `tray.icons.<state>` then `tray.icons.default` before the bundled assets.
 - `Stop` only stops the service for now. It does not change the service start mode.
 - `Exit Tray` closes only the tray icon for the current sign-in session. It does not stop the service.
 - Service control actions from the tray use UAC elevation and then call the existing lifecycle scripts through `invoke-tray-action.ps1`.

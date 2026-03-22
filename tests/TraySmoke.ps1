@@ -1,13 +1,17 @@
 [CmdletBinding()]
 param(
-  [string]$ConfigPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'service-config.local.json')
+  [string]$ConfigPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$resolvedConfigPath = $ConfigPath
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+  $resolvedConfigPath = Join-Path $repoRoot 'service-config.local.json'
+} else {
+  $resolvedConfigPath = $ConfigPath
+}
 . (Join-Path $repoRoot 'tests\TestHelpers.ps1')
 . (Join-Path $repoRoot 'tray-controller.ps1') -NoRun
 
@@ -32,6 +36,10 @@ $deepOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Pa
 $deepSnapshot = $deepOutput | ConvertFrom-Json
 if ([string]::IsNullOrWhiteSpace("$($deepSnapshot.serviceName)")) {
   throw 'Deep tray snapshot did not include a service name.'
+}
+
+if ([string]::IsNullOrWhiteSpace("$($deepSnapshot.displayName)")) {
+  throw 'Deep tray snapshot did not include a display name.'
 }
 
 $fastOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'status.ps1') -Json -TraySnapshot -RefreshKind fast -ConfigPath $resolvedConfigPath

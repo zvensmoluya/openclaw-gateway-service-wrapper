@@ -64,7 +64,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $stagingRoot $file) -Force
   }
 
-  foreach ($directory in @('docs', 'src', 'templates', 'tests')) {
+  foreach ($directory in @('assets', 'docs', 'src', 'templates', 'tests')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $directory) -Destination (Join-Path $stagingRoot $directory) -Recurse -Force
   }
 

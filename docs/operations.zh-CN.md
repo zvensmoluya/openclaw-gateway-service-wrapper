@@ -67,6 +67,9 @@ powershell -ExecutionPolicy Bypass -File .\status.ps1 -ConfigPath .\service-conf
 
 行为说明：
 
+- wrapper 配置可设置 `tray.title`、`tray.notifications`、`tray.refresh.*` 和可选的 `tray.icons.*` 覆盖项。
+- 健康且非 stale 的托盘空闲时不再周期性跑 fast 刷新，只按配置的深刷间隔做 deep 刷新；fast 刷新主要留给 degraded / stale 状态和菜单展开后的即时更新。
+- 内置默认托盘图标位于 `assets/tray/`。
 - `Stop` 只会停止服务，不会把服务启动类型切到 `Disabled`。
 - `Exit Tray` 只会关闭当前登录会话里的托盘控制器，不会停止服务。
 - 托盘动作会先请求 UAC 提权，然后通过 `invoke-tray-action.ps1` 再调用现有的 `start.ps1`、`stop.ps1`、`restart.ps1`。

@@ -10,18 +10,8 @@ Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1')
 
 try {
   $config = Resolve-ServiceConfig -ConfigPath $ConfigPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
-  try {
-    Invoke-WinSWCommand -Config $config -Command 'stop'
-  } catch {
-    Write-Warning "Standard stop failed, falling back to a targeted process-tree stop."
-    [void](Stop-RecordedServiceProcessTree -Config $config -TimeoutSec $config.stopTimeoutSeconds)
-  }
-
-  if (-not (Wait-ForServiceStatus -ServiceName $config.serviceName -DesiredStatus 'Stopped' -TimeoutSec 30)) {
-    throw "Service '$($config.serviceName)' did not stop within 30 seconds."
-  }
-
-  Write-Host "Service '$($config.serviceName)' is stopped."
+  $result = Stop-ManagedServiceWithRecovery -Config $config -TimeoutSec 30
+  Write-Host $result.message
   exit 0
 } catch {
   Write-Error $_

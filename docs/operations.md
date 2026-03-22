@@ -71,6 +71,9 @@ The tray menu provides:
 
 Behavior notes:
 
+- Wrapper config can set `tray.title`, `tray.notifications`, `tray.refresh.*`, and optional `tray.icons.*` overrides.
+- Healthy idle trays now avoid periodic fast refreshes and only schedule deep refreshes on the configured cadence. Fast refreshes are reserved for degraded or stale states, or when the tray menu is opened after the configured menu age.
+- Bundled tray icons ship in `assets/tray/`.
 - `Stop` only stops the service. It does not switch the service to `Disabled`.
 - `Exit Tray` only closes the tray controller for the current sign-in session. It does not stop the service.
 - Tray actions prompt for UAC elevation and then invoke `invoke-tray-action.ps1`, which in turn calls the existing `start.ps1`, `stop.ps1`, or `restart.ps1` scripts.

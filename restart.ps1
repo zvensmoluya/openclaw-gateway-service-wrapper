@@ -10,12 +10,8 @@ Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1')
 
 try {
   $config = Resolve-ServiceConfig -ConfigPath $ConfigPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
-  Invoke-WinSWCommand -Config $config -Command 'restart'
-  if (-not (Wait-ForServiceStatus -ServiceName $config.serviceName -DesiredStatus 'Running' -TimeoutSec 30)) {
-    throw "Service '$($config.serviceName)' did not return to the Running state within 30 seconds."
-  }
-
-  Write-Host "Service '$($config.serviceName)' restarted successfully."
+  $result = Restart-ManagedServiceWithRecovery -Config $config -TimeoutSec 30
+  Write-Host $result.message
   exit 0
 } catch {
   Write-Error $_

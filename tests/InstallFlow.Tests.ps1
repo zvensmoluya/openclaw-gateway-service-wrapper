@@ -109,4 +109,73 @@ Describe 'install.ps1 restart-task flow' {
     @($commands) | Should -Contain 'uninstall'
     @($commands) | Should -Not -Contain 'start'
   }
+
+  It 'uses recovery stop and waits for service removal during reinstall' {
+    $configPath = New-InstallTestConfig
+    $script:testPaths += $configPath
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $commands = [System.Collections.Generic.List[string]]::new()
+
+    Mock Resolve-ServiceAccountPlan {
+      @{
+        configuredMode     = 'localSystem'
+        effectiveMode      = 'localSystem'
+        deprecatedAlias    = $false
+        expectedStartName  = 'LocalSystem'
+        identityContext    = (Get-ServiceAccountIdentityContext -AccountName 'LocalSystem')
+        credential         = $null
+        requiresCredential = $false
+        promptUserName     = $null
+      }
+    }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceDetails {
+      @{
+        installed = $true
+        name      = $config.serviceName
+        status    = 'Running'
+        startType = 'Automatic'
+        processId = 100
+        startName = 'LocalSystem'
+        pathName  = 'OpenClawService.exe'
+      }
+    }
+    Mock Disable-ServiceStartForReinstall { $true }
+    Mock Stop-ManagedServiceWithRecovery {
+      @{
+        message = "Service '$($config.serviceName)' is stopped."
+      }
+    }
+    Mock Wait-ForServiceRemoval { $true }
+    Mock Get-PortListeners { @() }
+    Mock Ensure-WinSWBinary { 'winsw.exe' }
+    Mock Write-WinSWServiceXml { 'winsw.xml' }
+    Mock Invoke-WinSWCommand {
+      param($Config, $Command)
+      [void]$commands.Add($Command)
+    }
+    Mock Register-ServiceRestartTask { '\OpenClaw\Test-Restart' }
+    Mock Wait-ForServiceStatus { $true }
+    Mock Get-ServiceInstallValidationIssues { @() }
+    Mock Write-RememberedServiceConfigSelection { 'remembered.json' }
+    Mock Invoke-HealthCheck {
+      @{
+        ok         = $true
+        statusCode = 200
+        body       = '{"ok":true}'
+        error      = $null
+      }
+    }
+    Mock Install-TrayStartupShortcut { 'shortcut.lnk' }
+
+    & $script:installScript -ConfigPath $configPath -SkipTray
+
+    $LASTEXITCODE | Should -Be 0
+    Should -Invoke Disable-ServiceStartForReinstall -Times 1 -Exactly
+    Should -Invoke Stop-ManagedServiceWithRecovery -Times 1 -Exactly
+    Should -Invoke Wait-ForServiceRemoval -Times 1 -Exactly
+    @($commands) | Should -Contain 'uninstall'
+    @($commands) | Should -Contain 'install'
+    @($commands) | Should -Contain 'start'
+  }
 }

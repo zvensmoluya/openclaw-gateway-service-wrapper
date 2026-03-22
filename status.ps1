@@ -27,6 +27,11 @@ function New-StatusErrorReport {
       processId = 0
       startName = $null
       pathName  = $null
+      transitionStatus = $null
+      pending = $false
+      stuckStopping = $false
+      wrapperProcessId = 0
+      listenerProcessIds = @()
     }
   } else {
     Get-ServiceDetails -ServiceName $Selection.rememberedServiceName
@@ -44,6 +49,7 @@ function New-StatusErrorReport {
 
   return @{
     serviceName = $Selection.rememberedServiceName
+    displayName = if ([string]::IsNullOrWhiteSpace($Selection.rememberedServiceName)) { 'OpenClaw' } else { $Selection.rememberedServiceName }
     installed   = $service.installed
     service     = $service
     restartTask = New-EmptyServiceRestartTaskStatusReport
@@ -86,7 +92,8 @@ function Get-FullStatusContext {
   }
 
   $config = $trayContext.config
-  $service = Get-ServiceDetails -ServiceName $config.serviceName
+  $recoveryContext = Get-ServiceRecoveryContext -Config $config
+  $service = $recoveryContext.service
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
   $restartTask = Get-ServiceRestartTaskStatus -Config $config
   $proxy = Get-WrapperProxyStatusReport -Config $config
@@ -121,6 +128,11 @@ function Get-FullStatusContext {
     $issues += "Service '$($config.serviceName)' is not installed."
   }
 
+  $recoveryIssue = Get-ServiceRecoveryIssueMessage -Config $config -Context $recoveryContext
+  if (-not [string]::IsNullOrWhiteSpace($recoveryIssue)) {
+    $issues += $recoveryIssue
+  }
+
   if ($service.installed -and $service.status -ne 'Running') {
     $issues += "Service '$($config.serviceName)' is not running."
   }
@@ -137,6 +149,7 @@ function Get-FullStatusContext {
 
   $report = @{
     serviceName = $config.serviceName
+    displayName = $config.tray.title
     installed   = $service.installed
     service     = $service
     restartTask = $restartTask
@@ -180,6 +193,7 @@ function Get-FastTraySnapshotContext {
   if ($trayContext.selection.ContainsKey('invalidReason')) {
     $snapshot = New-TrayStatusSnapshot `
       -ServiceName $trayContext.serviceName `
+      -DisplayName $trayContext.serviceName `
       -Installed $false `
       -Service $null `
       -Health $null `
@@ -197,7 +211,8 @@ function Get-FastTraySnapshotContext {
     }
   }
 
-  $service = Get-ServiceDetails -ServiceName $trayContext.config.serviceName
+  $recoveryContext = Get-ServiceRecoveryContext -Config $trayContext.config
+  $service = $recoveryContext.service
   $cachedSnapshot = $null
   try {
     $cachedSnapshot = Read-TrayStateCache -CachePath $trayContext.paths.cachePath
@@ -206,7 +221,14 @@ function Get-FastTraySnapshotContext {
   }
 
   $cachedHealth = if ($null -ne $cachedSnapshot) { $cachedSnapshot.health } else { $null }
-  $cachedIssues = if ($null -ne $cachedSnapshot) { @($cachedSnapshot.issues) } else { @() }
+  $liveRecoveryIssue = Get-ServiceRecoveryIssueMessage -Config $trayContext.config -Context $recoveryContext
+  $cachedIssues = if (-not [string]::IsNullOrWhiteSpace($liveRecoveryIssue)) {
+    @($liveRecoveryIssue)
+  } elseif ($null -ne $cachedSnapshot) {
+    @($cachedSnapshot.issues)
+  } else {
+    @()
+  }
   $cachedWarnings = if ($null -ne $cachedSnapshot) { @($cachedSnapshot.warnings) } else { @() }
   $lastDeepObservedAt = if ($null -ne $cachedSnapshot) { "$($cachedSnapshot.lastDeepObservedAt)" } else { $null }
   $healthObservedAt = if ($null -ne $cachedSnapshot -and $null -ne $cachedSnapshot.health) { "$($cachedSnapshot.health.observedAt)" } else { $null }
@@ -214,6 +236,7 @@ function Get-FastTraySnapshotContext {
 
   $snapshot = New-TrayStatusSnapshot `
     -ServiceName $trayContext.config.serviceName `
+    -DisplayName $trayContext.config.tray.title `
     -Installed ([bool]$service.installed) `
     -Service $service `
     -Health $cachedHealth `
@@ -256,6 +279,7 @@ function Convert-FullStatusToTraySnapshot {
 
   $snapshot = New-TrayStatusSnapshot `
     -ServiceName "$($report.serviceName)" `
+    -DisplayName $(if ($null -ne $FullStatusContext.config) { $FullStatusContext.config.tray.title } else { $report.serviceName }) `
     -Installed ([bool]$report.installed) `
     -Service $report.service `
     -Health $report.health `
@@ -303,6 +327,7 @@ function Write-FullStatusReport {
   Write-Host "Layout       : $($identity.installLayout)"
   Write-Host "Installed    : $($service.installed)"
   Write-Host "Status       : $($service.status)"
+  Write-Host "Transition   : $($service.transitionStatus)"
   Write-Host "Start type   : $($service.startType)"
   Write-Host "Restart task : $($restartTask.fullTaskName)"
   Write-Host "Task status  : $($restartTask.state)"

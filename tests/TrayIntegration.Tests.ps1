@@ -19,6 +19,7 @@ Describe 'tray integration wiring' {
   It 'includes tray scripts in release packaging' {
     $script:buildReleaseScriptText | Should -Match 'invoke-tray-action\.ps1'
     $script:buildReleaseScriptText | Should -Match 'tray-controller\.ps1'
+    $script:buildReleaseScriptText | Should -Match "'assets'"
   }
 
   It 'keeps tray snapshot support in status.ps1' {
@@ -27,5 +28,13 @@ Describe 'tray integration wiring' {
     $statusScriptText | Should -Match '\[switch\]\$TraySnapshot'
     $statusScriptText | Should -Match 'RefreshKind'
     $statusScriptText | Should -Match 'Write-TrayStateCache'
+  }
+
+  It 'keeps tray actions asynchronous so the UI thread is not blocked' {
+    $trayControllerScriptText = Get-Content (Join-Path $script:repoRoot 'tray-controller.ps1') -Raw
+
+    $trayControllerScriptText | Should -Match 'function Complete-ActionIfReady'
+    $trayControllerScriptText | Should -Match '\$script:refreshTimer\.add_Tick\(\{\s+Complete-ActionIfReady'
+    $trayControllerScriptText | Should -Not -Match 'Invoke-TrayAction[\s\S]*?-PassThru\s+`?\s*-Wait'
   }
 }

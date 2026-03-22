@@ -75,6 +75,25 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
 
 这些代理字段属于 wrapper 配置，不属于上游 `openclaw.json`。它们用于覆盖 Windows Service 场景下的统一出站网络，例如 `web_search`、`web_fetch` 和 OpenClaw 拉起的辅助 CLI。像 `channels.telegram.proxy` 这样的模块级配置仍然归上游 OpenClaw 自己管理。
 
+## 托盘字段
+
+- `tray.title`：可选的托盘展示名；默认回退到 `displayName`
+- `tray.notifications`：`all`、`errorsOnly` 或 `off`
+- `tray.refresh.fastSeconds`：托盘处于 degraded 或 stale 时的后台 fast 刷新频率
+- `tray.refresh.deepSeconds`：完整 deep 刷新频率
+- `tray.refresh.menuSeconds`：菜单展开前允许缓存状态停留的最长秒数
+- `tray.icons.default`：可选的默认 `.ico` 路径
+- `tray.icons.healthy` / `degraded` / `unhealthy` / `stopped` / `error` / `loading` / `notInstalled`：可选的状态专属 `.ico` 路径
+
+托盘规则：
+
+- `tray` 只支持轻量配置，不支持自定义菜单项或菜单顺序。
+- 图标路径既可以是绝对路径，也可以是相对仓库根目录的路径。
+- 图标查找顺序固定为 `tray.icons.<state>` -> `tray.icons.default` -> 内置 `assets/tray/*.ico` -> Windows 系统图标。
+- `tray.refresh.fastSeconds` 的允许范围是 `15-300`。
+- `tray.refresh.deepSeconds` 的允许范围是 `60-900`。
+- `tray.refresh.menuSeconds` 的允许范围是 `5-60`。
+
 ## WinSW 相关字段
 
 - `winswVersion`：固定的 WinSW 版本
@@ -136,6 +155,15 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-con
   "stateDir": "%USERPROFILE%\\.openclaw",
   "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json",
   "tempDir": "%LOCALAPPDATA%\\Temp",
+  "tray": {
+    "title": "OpenClaw Service",
+    "notifications": "all",
+    "refresh": {
+      "fastSeconds": 30,
+      "deepSeconds": 180,
+      "menuSeconds": 10
+    }
+  },
   "serviceAccountMode": "credential",
   "openclawCommand": "",
   "allowForceBind": false,

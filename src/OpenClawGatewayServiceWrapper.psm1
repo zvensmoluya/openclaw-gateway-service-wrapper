@@ -101,6 +101,28 @@ function Merge-Hashtable {
   return $merged
 }
 
+function Get-DefaultTrayConfig {
+  return @{
+    title         = $null
+    notifications = 'all'
+    refresh       = @{
+      fastSeconds = 30
+      deepSeconds = 180
+      menuSeconds = 10
+    }
+    icons         = @{
+      default      = $null
+      healthy      = $null
+      degraded     = $null
+      unhealthy    = $null
+      stopped      = $null
+      error        = $null
+      loading      = $null
+      notInstalled = $null
+    }
+  }
+}
+
 function Get-DefaultServiceConfig {
   return @{
     serviceName        = 'OpenClawService'
@@ -132,6 +154,7 @@ function Get-DefaultServiceConfig {
     winswHome          = 'tools\winsw'
     runtimeStateDir    = '.runtime'
     logsDir            = 'logs'
+    tray               = (Get-DefaultTrayConfig)
   }
 }
 
@@ -356,6 +379,20 @@ function Resolve-AbsolutePath {
   }
 
   return [System.IO.Path]::GetFullPath((Join-Path $BasePath $Path))
+}
+
+function Resolve-OptionalAbsolutePath {
+  param(
+    [AllowNull()]
+    [string]$Path,
+    [string]$BasePath = $script:RepoRoot
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $null
+  }
+
+  return (Resolve-AbsolutePath -Path $Path -BasePath $BasePath)
 }
 
 function Get-DefaultWrapperConfigPath {
@@ -833,6 +870,111 @@ function Assert-ServiceConfig {
       throw "$proxyField must be a string when provided."
     }
   }
+
+  if (-not ($Config.tray -is [hashtable])) {
+    throw 'tray must be an object.'
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Config.tray.title)) {
+    throw 'tray.title must not be empty.'
+  }
+
+  if ($Config.tray.notifications -notin @('all', 'errorsOnly', 'off')) {
+    throw "tray.notifications '$($Config.tray.notifications)' is not supported. Use all, errorsOnly, or off."
+  }
+
+  if (-not ($Config.tray.refresh -is [hashtable])) {
+    throw 'tray.refresh must be an object.'
+  }
+
+  if ($Config.tray.refresh.fastSeconds -lt 15 -or $Config.tray.refresh.fastSeconds -gt 300) {
+    throw "tray.refresh.fastSeconds '$($Config.tray.refresh.fastSeconds)' is outside the valid range 15-300."
+  }
+
+  if ($Config.tray.refresh.deepSeconds -lt 60 -or $Config.tray.refresh.deepSeconds -gt 900) {
+    throw "tray.refresh.deepSeconds '$($Config.tray.refresh.deepSeconds)' is outside the valid range 60-900."
+  }
+
+  if ($Config.tray.refresh.menuSeconds -lt 5 -or $Config.tray.refresh.menuSeconds -gt 60) {
+    throw "tray.refresh.menuSeconds '$($Config.tray.refresh.menuSeconds)' is outside the valid range 5-60."
+  }
+
+  if (-not ($Config.tray.icons -is [hashtable])) {
+    throw 'tray.icons must be an object.'
+  }
+
+  foreach ($iconField in @('default', 'healthy', 'degraded', 'unhealthy', 'stopped', 'error', 'loading', 'notInstalled')) {
+    if (($null -ne $Config.tray.icons[$iconField]) -and -not ($Config.tray.icons[$iconField] -is [string])) {
+      throw "tray.icons.$iconField must be a string when provided."
+    }
+  }
+}
+
+function Convert-ToIntConfigValue {
+  param(
+    [AllowNull()]
+    $Value,
+    [Parameter(Mandatory = $true)]
+    [int]$Fallback
+  )
+
+  if ($null -eq $Value) {
+    return $Fallback
+  }
+
+  try {
+    return [int]$Value
+  } catch {
+    throw "Expected an integer-compatible value but got '$Value'."
+  }
+}
+
+function Normalize-WrapperTrayConfig {
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  if ($Config.ContainsKey('tray') -and $null -ne $Config.tray -and -not ($Config.tray -is [hashtable])) {
+    throw 'tray must be an object.'
+  }
+
+  $trayConfig = if ($Config.ContainsKey('tray') -and ($Config.tray -is [hashtable])) {
+    $Config.tray
+  } else {
+    @{}
+  }
+
+  if ($trayConfig.ContainsKey('refresh') -and $null -ne $trayConfig.refresh -and -not ($trayConfig.refresh -is [hashtable])) {
+    throw 'tray.refresh must be an object.'
+  }
+
+  if ($trayConfig.ContainsKey('icons') -and $null -ne $trayConfig.icons -and -not ($trayConfig.icons -is [hashtable])) {
+    throw 'tray.icons must be an object.'
+  }
+
+  $mergedTray = Merge-Hashtable -Base (Get-DefaultTrayConfig) -Overlay $trayConfig
+  $mergedTray.title = Normalize-OptionalWrapperConfigString -Value $mergedTray.title
+  if ([string]::IsNullOrWhiteSpace($mergedTray.title)) {
+    $mergedTray.title = $Config.displayName
+  }
+
+  $mergedTray.notifications = if ($null -eq $mergedTray.notifications) {
+    'all'
+  } else {
+    $mergedTray.notifications.ToString().Trim()
+  }
+
+  $mergedTray.refresh.fastSeconds = Convert-ToIntConfigValue -Value $mergedTray.refresh.fastSeconds -Fallback 30
+  $mergedTray.refresh.deepSeconds = Convert-ToIntConfigValue -Value $mergedTray.refresh.deepSeconds -Fallback 180
+  $mergedTray.refresh.menuSeconds = Convert-ToIntConfigValue -Value $mergedTray.refresh.menuSeconds -Fallback 10
+
+  foreach ($iconField in @('default', 'healthy', 'degraded', 'unhealthy', 'stopped', 'error', 'loading', 'notInstalled')) {
+    $normalizedPath = Normalize-OptionalWrapperConfigString -Value $mergedTray.icons[$iconField]
+    $mergedTray.icons[$iconField] = Resolve-OptionalAbsolutePath -Path $normalizedPath -BasePath $script:RepoRoot
+  }
+
+  return $mergedTray
 }
 
 function Get-ServiceConfig {
@@ -858,6 +1000,7 @@ function Get-ServiceConfig {
     }
     $merged[$definition.configKey] = Normalize-OptionalWrapperConfigString -Value $merged[$definition.configKey]
   }
+  $merged.tray = Normalize-WrapperTrayConfig -Config $merged
   Assert-ServiceConfig -Config $merged
 
   $merged.sourceConfigPath = $resolvedConfigPath
@@ -2005,6 +2148,361 @@ function Wait-ForServiceStatus {
   return $false
 }
 
+function Wait-ForServiceRemoval {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServiceName,
+    [int]$TimeoutSec = 30
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    $service = Get-ServiceDetails -ServiceName $ServiceName
+    if (-not $service.installed) {
+      return $true
+    }
+
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+
+  return $false
+}
+
+function Disable-ServiceStartForReinstall {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServiceName
+  )
+
+  & sc.exe config $ServiceName start= disabled *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Test-IsPendingServiceStatus {
+  param(
+    [AllowNull()]
+    [string]$Status
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Status)) {
+    return $false
+  }
+
+  return $Status -in @('StartPending', 'StopPending', 'ContinuePending')
+}
+
+function Get-ServiceRecoveryContext {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $service = Get-ServiceDetails -ServiceName $Config.serviceName
+  try {
+    $runState = Read-RunState -Config $Config
+  } catch {
+    $runState = $null
+  }
+  $wrapperProcessId = 0
+  if ($null -ne $runState -and $runState.ContainsKey('wrapperProcessId')) {
+    $wrapperProcessId = [int]$runState.wrapperProcessId
+  }
+
+  $listeners = @()
+  if ($Config.ContainsKey('port') -and [int]$Config.port -gt 0) {
+    try {
+      $listeners = @(Get-PortListeners -Port ([int]$Config.port))
+    } catch {
+      $listeners = @()
+    }
+  }
+
+  $listenerProcessIds = @(
+    $listeners |
+      ForEach-Object {
+        if ($null -ne $_ -and $_.PSObject.Properties.Name -contains 'processId') {
+          [int]$_.processId
+        }
+      } |
+      Where-Object { $_ -gt 0 } |
+      Sort-Object -Unique
+  )
+
+  $knownProcessIds = @(
+    @($service.processId, $wrapperProcessId) +
+    $listenerProcessIds
+  ) | Where-Object { $_ -gt 0 } | Sort-Object -Unique
+
+  $existingProcessIds = @(
+    $knownProcessIds |
+      Where-Object { Test-ProcessExists -ProcessId $_ } |
+      Sort-Object -Unique
+  )
+
+  $status = if ($service.installed) { "$($service.status)" } else { $null }
+  $isPending = Test-IsPendingServiceStatus -Status $status
+  $isStopPending = $status -eq 'StopPending'
+  $isStartPending = $status -eq 'StartPending'
+  $hasPortListeners = $listenerProcessIds.Count -gt 0
+  $hasResidualProcesses = $existingProcessIds.Count -gt 0
+  $isPortOccupiedWhileServiceNotRunning = $service.installed -and $status -ne 'Running' -and $hasPortListeners
+  $isStuckStopping = $isStopPending -and ($hasResidualProcesses -or $hasPortListeners)
+  $needsStartRecovery = $isStopPending -or $isPortOccupiedWhileServiceNotRunning
+
+  $service.transitionStatus = if ($isPending) { $status } else { $null }
+  $service.pending = $isPending
+  $service.stuckStopping = $isStuckStopping
+  $service.wrapperProcessId = $wrapperProcessId
+  $service.listenerProcessIds = $listenerProcessIds
+
+  return @{
+    service                        = $service
+    runState                       = $runState
+    status                         = $status
+    wrapperProcessId               = $wrapperProcessId
+    listeners                      = $listeners
+    listenerProcessIds             = $listenerProcessIds
+    knownProcessIds                = $knownProcessIds
+    existingProcessIds             = $existingProcessIds
+    isPending                      = $isPending
+    isStopPending                  = $isStopPending
+    isStartPending                 = $isStartPending
+    hasPortListeners               = $hasPortListeners
+    hasResidualProcesses           = $hasResidualProcesses
+    isPortOccupiedWhileServiceNotRunning = $isPortOccupiedWhileServiceNotRunning
+    isStuckStopping                = $isStuckStopping
+    needsStartRecovery             = $needsStartRecovery
+  }
+}
+
+function Get-ServiceRecoveryIssueMessage {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [hashtable]$Context = (Get-ServiceRecoveryContext -Config $Config)
+  )
+
+  if ($Context.isStuckStopping) {
+    return "Service '$($Config.serviceName)' is stuck in StopPending while the gateway process is still alive. Clear the residual service process tree before starting again."
+  }
+
+  if ($Context.isPortOccupiedWhileServiceNotRunning) {
+    return "Service '$($Config.serviceName)' is not running but a residual gateway process is still listening on port $($Config.port)."
+  }
+
+  if ($Context.isStartPending) {
+    return "Service '$($Config.serviceName)' is still transitioning in StartPending."
+  }
+
+  if ($Context.isPending) {
+    return "Service '$($Config.serviceName)' is still transitioning in $($Context.status)."
+  }
+
+  return $null
+}
+
+function Invoke-ServiceResidualCleanup {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [int]$TimeoutSec = 15
+  )
+
+  $initialContext = Get-ServiceRecoveryContext -Config $Config
+  $treeStopped = Stop-RecordedServiceProcessTree -Config $Config -TimeoutSec $TimeoutSec
+  $currentContext = Get-ServiceRecoveryContext -Config $Config
+  $remainingProcessIds = @($currentContext.knownProcessIds | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+  $attemptedProcessIds = @()
+
+  foreach ($processId in $remainingProcessIds) {
+    $attemptedProcessIds += $processId
+    Invoke-TaskKill -ProcessId $processId
+  }
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    $currentContext = Get-ServiceRecoveryContext -Config $Config
+    if ((@($currentContext.existingProcessIds).Count -eq 0) -and -not $currentContext.hasPortListeners) {
+      return @{
+        success            = $true
+        treeStopped        = $treeStopped
+        attemptedProcessIds = @($attemptedProcessIds | Sort-Object -Unique)
+        forceAttempted     = $false
+        initialContext     = $initialContext
+        context            = $currentContext
+      }
+    }
+
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+
+  $currentContext = Get-ServiceRecoveryContext -Config $Config
+  foreach ($processId in @($currentContext.existingProcessIds | Sort-Object -Unique)) {
+    if ($processId -gt 0) {
+      if ($attemptedProcessIds -notcontains $processId) {
+        $attemptedProcessIds += $processId
+      }
+      Invoke-TaskKill -ProcessId $processId -Force
+    }
+  }
+
+  Start-Sleep -Seconds 2
+  $currentContext = Get-ServiceRecoveryContext -Config $Config
+  return @{
+    success            = ((@($currentContext.existingProcessIds).Count -eq 0) -and -not $currentContext.hasPortListeners)
+    treeStopped        = $treeStopped
+    attemptedProcessIds = @($attemptedProcessIds | Sort-Object -Unique)
+    forceAttempted     = $true
+    initialContext     = $initialContext
+    context            = $currentContext
+  }
+}
+
+function Stop-ManagedServiceWithRecovery {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [int]$TimeoutSec = 30
+  )
+
+  $graceTimeoutSec = [Math]::Min($TimeoutSec, [Math]::Max(5, [int]$Config.stopTimeoutSeconds))
+  $standardStopFailed = $false
+
+  try {
+    Invoke-WinSWCommand -Config $Config -Command 'stop'
+  } catch {
+    $standardStopFailed = $true
+  }
+
+  if (Wait-ForServiceStatus -ServiceName $Config.serviceName -DesiredStatus 'Stopped' -TimeoutSec $graceTimeoutSec) {
+    return @{
+      message           = "Service '$($Config.serviceName)' is stopped."
+      recovered         = $standardStopFailed
+      cleanupAttempted  = $standardStopFailed
+      cleanupResult     = $null
+      context           = (Get-ServiceRecoveryContext -Config $Config)
+    }
+  }
+
+  $context = Get-ServiceRecoveryContext -Config $Config
+  $cleanup = Invoke-ServiceResidualCleanup -Config $Config -TimeoutSec ([Math]::Max(5, [int]$Config.stopTimeoutSeconds))
+  if (Wait-ForServiceStatus -ServiceName $Config.serviceName -DesiredStatus 'Stopped' -TimeoutSec $TimeoutSec) {
+    return @{
+      message           = "Service '$($Config.serviceName)' is stopped."
+      recovered         = $true
+      cleanupAttempted  = $true
+      cleanupResult     = $cleanup
+      context           = (Get-ServiceRecoveryContext -Config $Config)
+    }
+  }
+
+  $finalContext = Get-ServiceRecoveryContext -Config $Config
+  $issueMessage = Get-ServiceRecoveryIssueMessage -Config $Config -Context $finalContext
+  if ([string]::IsNullOrWhiteSpace($issueMessage)) {
+    $issueMessage = "Service '$($Config.serviceName)' did not stop within $TimeoutSec seconds."
+  }
+
+  throw $issueMessage
+}
+
+function Start-ManagedServiceWithRecovery {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [int]$TimeoutSec = 30
+  )
+
+  $preStartContext = Get-ServiceRecoveryContext -Config $Config
+  $cleanup = $null
+  if ($preStartContext.needsStartRecovery) {
+    $cleanup = Invoke-ServiceResidualCleanup -Config $Config -TimeoutSec ([Math]::Max(5, [int]$Config.stopTimeoutSeconds))
+    if (-not $cleanup.success) {
+      $issueMessage = Get-ServiceRecoveryIssueMessage -Config $Config -Context $cleanup.context
+      if ([string]::IsNullOrWhiteSpace($issueMessage)) {
+        $issueMessage = "Service '$($Config.serviceName)' is stuck stopping and its residual processes could not be cleared."
+      }
+
+      throw $issueMessage
+    }
+
+    [void](Wait-ForServiceStatus -ServiceName $Config.serviceName -DesiredStatus 'Stopped' -TimeoutSec ([Math]::Max(5, [int]$Config.stopTimeoutSeconds)))
+  }
+
+  Invoke-WinSWCommand -Config $Config -Command 'start'
+  if (Wait-ForServiceStatus -ServiceName $Config.serviceName -DesiredStatus 'Running' -TimeoutSec $TimeoutSec) {
+    return @{
+      message           = if ($null -ne $cleanup) { 'Recovered a stuck stop and started the service.' } else { "Service '$($Config.serviceName)' is running." }
+      recovered         = ($null -ne $cleanup)
+      cleanupAttempted  = ($null -ne $cleanup)
+      cleanupResult     = $cleanup
+      context           = (Get-ServiceRecoveryContext -Config $Config)
+    }
+  }
+
+  $timeoutContext = Get-ServiceRecoveryContext -Config $Config
+  if ($timeoutContext.needsStartRecovery) {
+    $cleanup = Invoke-ServiceResidualCleanup -Config $Config -TimeoutSec ([Math]::Max(5, [int]$Config.stopTimeoutSeconds))
+    if ($cleanup.success) {
+      Invoke-WinSWCommand -Config $Config -Command 'start'
+      if (Wait-ForServiceStatus -ServiceName $Config.serviceName -DesiredStatus 'Running' -TimeoutSec $TimeoutSec) {
+        return @{
+          message           = 'Recovered a stuck stop and started the service.'
+          recovered         = $true
+          cleanupAttempted  = $true
+          cleanupResult     = $cleanup
+          context           = (Get-ServiceRecoveryContext -Config $Config)
+        }
+      }
+    }
+  }
+
+  $finalContext = Get-ServiceRecoveryContext -Config $Config
+  $issueMessage = Get-ServiceRecoveryIssueMessage -Config $Config -Context $finalContext
+  if ([string]::IsNullOrWhiteSpace($issueMessage)) {
+    $issueMessage = "Service '$($Config.serviceName)' did not start within $TimeoutSec seconds."
+  }
+
+  throw $issueMessage
+}
+
+function Restart-ManagedServiceWithRecovery {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [int]$TimeoutSec = 30
+  )
+
+  $stopResult = Stop-ManagedServiceWithRecovery -Config $Config -TimeoutSec $TimeoutSec
+  $startResult = Start-ManagedServiceWithRecovery -Config $Config -TimeoutSec $TimeoutSec
+  $stopRecovered = if ($stopResult -is [System.Collections.IDictionary]) {
+    $stopResult.ContainsKey('recovered') -and [bool]$stopResult.recovered
+  } else {
+    ($null -ne $stopResult) -and ($stopResult.PSObject.Properties.Name -contains 'recovered') -and [bool]$stopResult.recovered
+  }
+  $startRecovered = if ($startResult -is [System.Collections.IDictionary]) {
+    $startResult.ContainsKey('recovered') -and [bool]$startResult.recovered
+  } else {
+    ($null -ne $startResult) -and ($startResult.PSObject.Properties.Name -contains 'recovered') -and [bool]$startResult.recovered
+  }
+  $recovered = [bool](
+    $stopRecovered -or
+    $startRecovered
+  )
+  return @{
+    message = if ($recovered) { 'Recovered a stuck stop and restarted the service.' } else { "Service '$($Config.serviceName)' restarted successfully." }
+    recovered = $recovered
+    context = (Get-ServiceRecoveryContext -Config $Config)
+  }
+}
+
 function Invoke-WinSWCommand {
   [CmdletBinding()]
   param(
@@ -2371,6 +2869,7 @@ function New-TrayStatusSnapshot {
   [CmdletBinding()]
   param(
     [string]$ServiceName,
+    [string]$DisplayName,
     [bool]$Installed,
     $Service,
     $Health,
@@ -2392,6 +2891,7 @@ function New-TrayStatusSnapshot {
   )
 
   $resolvedServiceName = if ([string]::IsNullOrWhiteSpace($ServiceName)) { 'OpenClaw' } else { $ServiceName }
+  $resolvedDisplayName = if ([string]::IsNullOrWhiteSpace($DisplayName)) { $resolvedServiceName } else { $DisplayName }
   $serviceTable = ConvertTo-Hashtable -InputObject $Service
   if ($null -eq $serviceTable) {
     $serviceTable = @{}
@@ -2411,6 +2911,7 @@ function New-TrayStatusSnapshot {
   }
   $hasHealthData = $healthTable.ContainsKey('ok') -and $null -ne $healthTable.ok
   $isHealthy = $hasHealthData -and [bool]$healthTable.ok
+  $isPendingStatus = Test-IsPendingServiceStatus -Status $serviceStatus
   $issueSummary = if ($issueList.Count -gt 0) { $issueList[0] } else { $null }
   $warningSummary = if ($warningList.Count -gt 0) { $warningList[0] } else { $null }
   $observedAtIso = $ObservedAt.ToString('o')
@@ -2431,11 +2932,19 @@ function New-TrayStatusSnapshot {
     $state = 'error'
   } elseif (-not $Installed) {
     $summary = 'Not installed'
-    $detail = "$resolvedServiceName is not installed."
+    $detail = "$resolvedDisplayName is not installed."
     $state = 'notInstalled'
+  } elseif ($serviceStatus -eq 'StopPending') {
+    $summary = if ($issueList.Count -gt 0) { 'Stuck stopping' } else { 'Stopping...' }
+    $detail = if ($issueList.Count -gt 0) { $issueSummary } else { "$resolvedDisplayName is stopping." }
+    $state = 'pending'
+  } elseif ($isPendingStatus) {
+    $summary = 'Transitioning...'
+    $detail = if ($issueList.Count -gt 0) { $issueSummary } else { "$resolvedDisplayName is transitioning ($serviceStatus)." }
+    $state = 'pending'
   } elseif ($serviceStatus -ne 'Running') {
     $summary = 'Stopped'
-    $detail = "$resolvedServiceName is installed but not running."
+    $detail = "$resolvedDisplayName is installed but not running."
     $state = 'stopped'
   } elseif (-not $hasHealthData) {
     $summary = 'Refreshing...'
@@ -2443,7 +2952,7 @@ function New-TrayStatusSnapshot {
     $state = 'loading'
   } elseif (-not $isHealthy) {
     $summary = 'Running with issues'
-    $detail = if (-not [string]::IsNullOrWhiteSpace("$($healthTable.error)")) { "$($healthTable.error)" } else { "$resolvedServiceName is running but unhealthy." }
+    $detail = if (-not [string]::IsNullOrWhiteSpace("$($healthTable.error)")) { "$($healthTable.error)" } else { "$resolvedDisplayName is running but unhealthy." }
     $state = 'unhealthy'
   } elseif ($issueList.Count -gt 0) {
     $summary = 'Running with attention needed'
@@ -2451,7 +2960,7 @@ function New-TrayStatusSnapshot {
     $state = 'degraded'
   } else {
     $summary = 'Running'
-    $detail = "$resolvedServiceName is healthy."
+    $detail = "$resolvedDisplayName is healthy."
     $state = 'healthy'
   }
 
@@ -2463,16 +2972,20 @@ function New-TrayStatusSnapshot {
     $detail = if ([string]::IsNullOrWhiteSpace($detail)) { $StaleReason } else { "$detail Stale: $StaleReason" }
   }
 
-  $canStart = $Installed -and $serviceStatus -ne 'Running' -and [string]::IsNullOrWhiteSpace($ErrorMessage)
+  $canStart = $Installed -and ($serviceStatus -ne 'Running' -or $serviceStatus -eq 'StopPending') -and [string]::IsNullOrWhiteSpace($ErrorMessage)
+  if ($isPendingStatus -and $serviceStatus -ne 'StopPending') {
+    $canStart = $false
+  }
   $canStop = $Installed -and $serviceStatus -eq 'Running' -and [string]::IsNullOrWhiteSpace($ErrorMessage)
   $canRestart = $canStop
-  $tooltipText = "${resolvedServiceName}: $summary"
+  $tooltipText = "${resolvedDisplayName}: $summary"
   if ($IsStale) {
     $tooltipText = "$tooltipText (stale)"
   }
 
   return @{
     serviceName         = $resolvedServiceName
+    displayName         = $resolvedDisplayName
     observedAt          = $observedAtIso
     refreshKind         = $RefreshKind
     lastDeepObservedAt  = $resolvedLastDeepObservedAt
@@ -2586,6 +3099,8 @@ Export-ModuleMember -Function `
   Get-ServiceAccountIdentityContext, `
   Get-ServiceArtifactLayout, `
   Get-ServiceConfig, `
+  Get-ServiceRecoveryContext, `
+  Get-ServiceRecoveryIssueMessage, `
   Get-ServiceDetails, `
   Get-ServiceExecutablePathFromPathName, `
   Get-ServiceIdentityContext, `
@@ -2599,6 +3114,7 @@ Export-ModuleMember -Function `
   Get-WrapperRoot, `
   Invoke-HealthCheck, `
   Invoke-WinSWCommand, `
+  Disable-ServiceStartForReinstall, `
   Install-TrayStartupShortcut, `
   Register-ServiceRestartTask, `
   Read-RememberedServiceConfigSelection, `
@@ -2614,12 +3130,18 @@ Export-ModuleMember -Function `
   Resolve-ServiceConfigSelection, `
   Resolve-WrapperProxyEnvironmentPlan, `
   Resolve-InspectionIdentityContext, `
+  Restart-ManagedServiceWithRecovery, `
   Set-TrayStatusSnapshotStale, `
   Set-WrapperProxyEnvironment, `
+  Start-ManagedServiceWithRecovery, `
   Stop-RecordedServiceProcessTree, `
+  Stop-ManagedServiceWithRecovery, `
   Test-IsBuiltInServiceAccount, `
+  Test-IsPendingServiceStatus, `
   Test-ServiceAccountMatch, `
   Update-RunState, `
+  Invoke-ServiceResidualCleanup, `
+  Wait-ForServiceRemoval, `
   Wait-ForServiceStatus, `
   Write-TrayStateCache, `
   Write-RememberedServiceConfigSelection, `

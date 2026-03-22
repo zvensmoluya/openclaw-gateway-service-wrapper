@@ -40,28 +40,18 @@ try {
   if ($serviceDetails.installed) {
     Write-Host "Reinstalling existing service '$($config.serviceName)'."
 
-    try {
-      Invoke-WinSWCommand -Config $config -Command 'stop'
-    } catch {
-      if (-not $Force) {
-        throw
-      }
-
-      Write-Warning "Standard stop failed, falling back to a targeted process-tree stop."
-      [void](Stop-RecordedServiceProcessTree -Config $config -TimeoutSec $config.stopTimeoutSeconds)
-    }
-
-    [void](Wait-ForServiceStatus -ServiceName $config.serviceName -DesiredStatus 'Stopped' -TimeoutSec 30)
+    [void](Disable-ServiceStartForReinstall -ServiceName $config.serviceName)
+    [void](Stop-ManagedServiceWithRecovery -Config $config -TimeoutSec 30)
 
     try {
       Invoke-WinSWCommand -Config $config -Command 'uninstall'
     } catch {
-      if (-not $Force) {
-        throw
-      }
-
       Write-Warning "Standard uninstall failed, removing the service with sc.exe."
       & sc.exe delete $config.serviceName *> $null
+    }
+
+    if (-not (Wait-ForServiceRemoval -ServiceName $config.serviceName -TimeoutSec 30)) {
+      throw "Service '$($config.serviceName)' still exists after uninstall. Reboot the machine or delete the stale service entry before reinstalling."
     }
   }
 

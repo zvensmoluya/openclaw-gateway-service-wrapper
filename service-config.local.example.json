@@ -4,6 +4,10 @@
   "stateDir": "%USERPROFILE%\\.openclaw",
   "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json",
   "tempDir": "%LOCALAPPDATA%\\Temp",
+  "tray": {
+    "title": "OpenClaw Local",
+    "notifications": "errorsOnly"
+  },
   "logPolicy": {
     "mode": "rotate"
   }
