@@ -5,10 +5,8 @@ Describe 'invoke-tray-action.ps1' {
     . $script:actionScript -Action start -NoInvoke
   }
 
-  It 'resolves lifecycle scripts for each tray action' {
-    (Resolve-TrayActionScriptPath -ResolvedAction 'start') | Should -Be (Join-Path $script:repoRoot 'start.ps1')
-    (Resolve-TrayActionScriptPath -ResolvedAction 'stop') | Should -Be (Join-Path $script:repoRoot 'stop.ps1')
-    (Resolve-TrayActionScriptPath -ResolvedAction 'restart') | Should -Be (Join-Path $script:repoRoot 'restart.ps1')
+  It 'resolves the shared service action invoker path' {
+    (Resolve-ServiceActionInvokerPath) | Should -Be (Join-Path $script:repoRoot 'invoke-service-action.ps1')
   }
 
   It 'rejects unsupported actions before invocation' {

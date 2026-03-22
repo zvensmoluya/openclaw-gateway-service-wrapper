@@ -51,6 +51,36 @@ Describe 'service lifecycle recovery' {
       $context.listenerProcessIds | Should -Contain 38744
     }
 
+    It 'tracks recorded gateway and listener PIDs from runtime state' {
+      Mock Get-ServiceDetails {
+        @{
+          installed = $true
+          name      = 'OpenClawService'
+          status    = 'Running'
+          startType = 'Automatic'
+          processId = 32032
+          startName = 'LocalSystem'
+          pathName  = 'OpenClawService.exe'
+        }
+      }
+      Mock Read-RunState {
+        @{
+          wrapperProcessId   = 26524
+          gatewayProcessId   = 30001
+          listenerProcessIds = @(38744, 38745)
+          launchMode         = 'directNodeFromCmdShim'
+        }
+      }
+      Mock Get-PortListeners { @() }
+      Mock Test-ProcessExists { $true }
+
+      $context = Get-ServiceRecoveryContext -Config $script:testConfig
+
+      $context.gatewayProcessId | Should -Be 30001
+      @($context.recordedListenerProcessIds) | Should -Contain 38744
+      $context.launchMode | Should -Be 'directNodeFromCmdShim'
+    }
+
     It 'falls back to residual cleanup when stop does not reach Stopped' {
       $script:stopWaitCalls = 0
 
@@ -91,6 +121,52 @@ Describe 'service lifecycle recovery' {
       $result.cleanupAttempted | Should -BeTrue
       $result.message | Should -Be "Service 'OpenClawService' is stopped."
       Should -Invoke Invoke-ServiceResidualCleanup -Times 1 -Exactly
+    }
+
+    It 'targets listener PIDs before wrapper processes when stopping the recorded tree' {
+      $script:targetCalls = @()
+      $script:contextCalls = 0
+
+      Mock Get-ServiceRecoveryContext {
+        $script:contextCalls++
+        if ($script:contextCalls -eq 1) {
+          return @{
+            wrapperProcessId           = 26524
+            gatewayProcessId           = 30001
+            listenerProcessIds         = @(38744)
+            recordedListenerProcessIds = @(38744)
+            hasPortListeners           = $true
+            service                    = @{
+              processId = 32032
+            }
+          }
+        }
+
+        return @{
+          wrapperProcessId           = 0
+          gatewayProcessId           = 0
+          listenerProcessIds         = @()
+          recordedListenerProcessIds = @()
+          hasPortListeners           = $false
+          service                    = @{
+            processId = 32032
+          }
+        }
+      }
+      Mock Stop-ProcessIdWithFallbacks {
+        param($ProcessId, $Force, $IncludeChildren)
+        $script:targetCalls += "${ProcessId}:${IncludeChildren}:${Force}"
+        @{
+          success = $true
+        }
+      }
+
+      $result = Stop-RecordedServiceProcessTree -Config $script:testConfig -TimeoutSec 1
+
+      $result | Should -BeTrue
+      $script:targetCalls[0] | Should -Match '^38744:False:'
+      $script:targetCalls[1] | Should -Match '^30001:True:'
+      $script:targetCalls[2] | Should -Match '^26524:True:'
     }
 
     It 'cleans a stuck stopping service before start' {

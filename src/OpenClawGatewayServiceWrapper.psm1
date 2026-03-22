@@ -1341,6 +1341,7 @@ function Get-ServiceArtifactLayout {
   $legacyExecutablePath = Join-Path $script:RepoRoot "$($Config.serviceName).exe"
   $legacyXmlPath = Join-Path $script:RepoRoot "$($Config.serviceName).xml"
   $stateFilePath = Join-Path $Config.runtimeStateDirectory "$($Config.serviceName).state.json"
+  $controlStatePath = Join-Path $Config.runtimeStateDirectory "$($Config.serviceName).control-state.json"
 
   return @{
     generatedDirectory      = $generatedDirectory
@@ -1349,10 +1350,202 @@ function Get-ServiceArtifactLayout {
     legacyExecutablePath    = $legacyExecutablePath
     legacyXmlPath           = $legacyXmlPath
     stateFilePath           = $stateFilePath
+    controlStatePath        = $controlStatePath
   }
 }
 
-function New-EmptyServiceRestartTaskStatusReport {
+function Get-ServiceControlArtifactPaths {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action
+  )
+
+  $layout = Get-ServiceArtifactLayout -Config $Config
+  $paths = @{
+    statePath = $layout.controlStatePath
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($Action)) {
+    $paths.requestPath = Join-Path $Config.runtimeStateDirectory "$($Config.serviceName).control-$Action.request.json"
+    $paths.resultPath = Join-Path $Config.runtimeStateDirectory "$($Config.serviceName).control-$Action.result.json"
+    $paths.logPath = Join-Path $Config.logsDirectory "$($Config.serviceName).control-$Action.log"
+  }
+
+  return $paths
+}
+
+function Read-ServiceControlState {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config
+  if (-not (Test-Path -LiteralPath $paths.statePath)) {
+    return $null
+  }
+
+  return (ConvertTo-Hashtable -InputObject (Get-Content -LiteralPath $paths.statePath -Raw | ConvertFrom-Json))
+}
+
+function Write-ServiceControlState {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$State
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config
+  Ensure-Directory -Path $Config.runtimeStateDirectory
+  Set-Content -LiteralPath $paths.statePath -Value ($State | ConvertTo-Json -Depth 10) -Encoding UTF8
+  return $paths.statePath
+}
+
+function Update-ServiceControlState {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Patch
+  )
+
+  $existing = Read-ServiceControlState -Config $Config
+  if ($null -eq $existing) {
+    $existing = @{}
+  }
+
+  foreach ($key in $Patch.Keys) {
+    $existing[$key] = $Patch[$key]
+  }
+
+  Write-ServiceControlState -Config $Config -State $existing | Out-Null
+}
+
+function Read-ServiceControlRequest {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+  if (-not (Test-Path -LiteralPath $paths.requestPath)) {
+    return $null
+  }
+
+  return (ConvertTo-Hashtable -InputObject (Get-Content -LiteralPath $paths.requestPath -Raw | ConvertFrom-Json))
+}
+
+function Write-ServiceControlRequest {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Request
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+  Ensure-Directory -Path $Config.runtimeStateDirectory
+  Set-Content -LiteralPath $paths.requestPath -Value ($Request | ConvertTo-Json -Depth 10) -Encoding UTF8
+  return $paths.requestPath
+}
+
+function Read-ServiceControlResult {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+  if (-not (Test-Path -LiteralPath $paths.resultPath)) {
+    return $null
+  }
+
+  return (ConvertTo-Hashtable -InputObject (Get-Content -LiteralPath $paths.resultPath -Raw | ConvertFrom-Json))
+}
+
+function Write-ServiceControlResult {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Result
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+  Ensure-Directory -Path $Config.runtimeStateDirectory
+  Set-Content -LiteralPath $paths.resultPath -Value ($Result | ConvertTo-Json -Depth 10) -Encoding UTF8
+  return $paths.resultPath
+}
+
+function Write-ServiceControlAudit {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action,
+    [Parameter(Mandatory = $true)]
+    [string]$Message
+  )
+
+  $paths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+  Ensure-Directory -Path $Config.logsDirectory
+  Add-Content -LiteralPath $paths.logPath -Value ("{0} {1}" -f (Get-Date).ToString('o'), $Message) -Encoding UTF8
+}
+
+function Get-ServiceControlMutexName {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServiceName
+  )
+
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($ServiceName.ToLowerInvariant())
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $hash = [System.BitConverter]::ToString($algorithm.ComputeHash($bytes)).Replace('-', '')
+  } finally {
+    $algorithm.Dispose()
+  }
+
+  return "Global\OpenClaw.Control.$hash"
+}
+
+function Test-IsCurrentProcessElevated {
+  [CmdletBinding()]
+  param()
+
+  $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function New-EmptyScheduledTaskStatusReport {
+  [CmdletBinding()]
   param()
 
   return @{
@@ -1376,6 +1569,94 @@ function New-EmptyServiceRestartTaskStatusReport {
   }
 }
 
+function New-EmptyServiceRestartTaskStatusReport {
+  [CmdletBinding()]
+  param()
+
+  return (New-EmptyScheduledTaskStatusReport)
+}
+
+function New-EmptyServiceControlTaskStatusReport {
+  [CmdletBinding()]
+  param(
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action
+  )
+
+  $report = New-EmptyScheduledTaskStatusReport
+  $report.action = $Action
+  $report.requestPath = $null
+  $report.resultPath = $null
+  $report.statePath = $null
+  return $report
+}
+
+function Set-ScheduledTaskStatusReportFromInfo {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Report,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskInfo
+  )
+
+  $Report.taskPath = $TaskInfo.taskPath
+  $Report.taskName = $TaskInfo.taskName
+  $Report.fullTaskName = $TaskInfo.fullTaskName
+  $Report.scriptPath = $TaskInfo.scriptPath
+  $Report.logPath = $TaskInfo.logPath
+  $Report.description = $TaskInfo.description
+  $Report.expectedAction.execute = $TaskInfo.actionExecutable
+  $Report.expectedAction.arguments = $TaskInfo.actionArguments
+
+  if ($TaskInfo.ContainsKey('requestPath')) {
+    $Report.requestPath = $TaskInfo.requestPath
+  }
+
+  if ($TaskInfo.ContainsKey('resultPath')) {
+    $Report.resultPath = $TaskInfo.resultPath
+  }
+
+  if ($TaskInfo.ContainsKey('statePath')) {
+    $Report.statePath = $TaskInfo.statePath
+  }
+
+  return $Report
+}
+
+function New-ServiceScheduledTaskInfo {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$TaskName,
+    [Parameter(Mandatory = $true)]
+    [string]$ScriptPath,
+    [Parameter(Mandatory = $true)]
+    [string]$ConfigPath,
+    [Parameter(Mandatory = $true)]
+    [string]$LogPath,
+    [Parameter(Mandatory = $true)]
+    [string]$Description,
+    [hashtable]$AdditionalArguments = @{}
+  )
+
+  $taskPath = '\OpenClaw\'
+  $fullTaskName = "$taskPath$TaskName"
+  $actionExecutable = Get-WindowsPowerShellExecutablePath
+  $actionArguments = Format-PowerShellCommandArguments -ScriptPath $ScriptPath -ConfigPath $ConfigPath -AdditionalNamedArguments $AdditionalArguments
+
+  return @{
+    taskPath         = $taskPath
+    taskName         = $TaskName
+    fullTaskName     = $fullTaskName
+    scriptPath       = $ScriptPath
+    logPath          = $LogPath
+    description      = $Description
+    actionExecutable = $actionExecutable
+    actionArguments  = $actionArguments
+  }
+}
+
 function Get-ServiceRestartTaskInfo {
   [CmdletBinding()]
   param(
@@ -1383,34 +1664,69 @@ function Get-ServiceRestartTaskInfo {
     [hashtable]$Config
   )
 
-  $taskPath = '\OpenClaw\'
-  $taskName = "$($Config.serviceName)-Restart"
-  $fullTaskName = "$taskPath$taskName"
   $scriptPath = Join-Path $script:RepoRoot 'restart-service-task.ps1'
-  $actionExecutable = Get-WindowsPowerShellExecutablePath
-  $actionArguments = Format-PowerShellCommandArguments -ScriptPath $scriptPath -ConfigPath $Config.sourceConfigPath
-  $logPath = Join-Path $Config.logsDirectory "$($Config.serviceName).restart-task.log"
-  $description = "Bridge intentional OpenClaw restarts back into the WinSW service '$($Config.serviceName)'."
-
-  return @{
-    taskPath         = $taskPath
-    taskName         = $taskName
-    fullTaskName     = $fullTaskName
-    scriptPath       = $scriptPath
-    logPath          = $logPath
-    description      = $description
-    actionExecutable = $actionExecutable
-    actionArguments  = $actionArguments
-  }
+  return (New-ServiceScheduledTaskInfo `
+    -TaskName "$($Config.serviceName)-Restart" `
+    -ScriptPath $scriptPath `
+    -ConfigPath $Config.sourceConfigPath `
+    -LogPath (Join-Path $Config.logsDirectory "$($Config.serviceName).restart-task.log") `
+    -Description "Bridge intentional OpenClaw restarts back into the WinSW service '$($Config.serviceName)'." `
+    -AdditionalArguments @{})
 }
 
-function Format-ServiceRestartTaskCommandLine {
+function Get-ServiceControlTaskInfo {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action
+  )
+
+  if ($Action -eq 'restart') {
+    $restartInfo = Get-ServiceRestartTaskInfo -Config $Config
+    $restartPaths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+    $restartInfo.requestPath = $restartPaths.requestPath
+    $restartInfo.resultPath = $restartPaths.resultPath
+    $restartInfo.statePath = $restartPaths.statePath
+    return $restartInfo
+  }
+
+  $actionTitle = (Get-Culture).TextInfo.ToTitleCase($Action)
+  $scriptPath = Join-Path $script:RepoRoot 'control-service-task.ps1'
+  $paths = Get-ServiceControlArtifactPaths -Config $Config -Action $Action
+  $info = New-ServiceScheduledTaskInfo `
+    -TaskName "$($Config.serviceName)-$actionTitle" `
+    -ScriptPath $scriptPath `
+    -ConfigPath $Config.sourceConfigPath `
+    -LogPath $paths.logPath `
+    -Description "Bridge '$Action' requests for the WinSW service '$($Config.serviceName)' through a SYSTEM-owned control task." `
+    -AdditionalArguments @{ Action = $Action }
+  $info.requestPath = $paths.requestPath
+  $info.resultPath = $paths.resultPath
+  $info.statePath = $paths.statePath
+  return $info
+}
+
+function Format-ServiceScheduledTaskCommandLine {
+  [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)]
     [hashtable]$TaskInfo
   )
 
   return ('"{0}" {1}' -f $TaskInfo.actionExecutable, $TaskInfo.actionArguments)
+}
+
+function Format-ServiceRestartTaskCommandLine {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskInfo
+  )
+
+  return (Format-ServiceScheduledTaskCommandLine -TaskInfo $TaskInfo)
 }
 
 function Invoke-SchtasksCommand {
@@ -1439,65 +1755,56 @@ function Invoke-SchtasksCommand {
   }
 }
 
-function Get-ServiceRestartTaskStatusViaCom {
+function Get-ScheduledTaskStatusViaCom {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)]
-    [hashtable]$Config
+    [hashtable]$TaskInfo,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Report
   )
-
-  $info = Get-ServiceRestartTaskInfo -Config $Config
-  $report = New-EmptyServiceRestartTaskStatusReport
-  $report.taskPath = $info.taskPath
-  $report.taskName = $info.taskName
-  $report.fullTaskName = $info.fullTaskName
-  $report.scriptPath = $info.scriptPath
-  $report.logPath = $info.logPath
-  $report.description = $info.description
-  $report.expectedAction.execute = $info.actionExecutable
-  $report.expectedAction.arguments = $info.actionArguments
 
   $service = $null
   try {
     $service = New-Object -ComObject 'Schedule.Service'
     $service.Connect()
-    $folderPath = $info.taskPath.TrimEnd('\')
+    $folderPath = $TaskInfo.taskPath.TrimEnd('\')
     if ([string]::IsNullOrWhiteSpace($folderPath)) {
       $folderPath = '\'
     }
     $folder = $service.GetFolder($folderPath)
-    $task = $folder.GetTask($info.taskName)
+    $task = $folder.GetTask($TaskInfo.taskName)
 
     if ($null -eq $task) {
-      return $report
+      return $Report
     }
 
-    $report.exists = $true
-    $report.state = $task.State.ToString()
+    $Report.exists = $true
+    $Report.state = $task.State.ToString()
 
     [xml]$definition = $task.Xml
     $commandNode = $definition.SelectSingleNode('/Task/Actions/Exec/Command')
     $argumentsNode = $definition.SelectSingleNode('/Task/Actions/Exec/Arguments')
 
-    $report.actualAction.execute = if ($null -ne $commandNode) { $commandNode.InnerText } else { $null }
-    $report.actualAction.arguments = if ($null -ne $argumentsNode) { $argumentsNode.InnerText } else { $null }
-    $report.matches = (
-      (Test-ServiceRestartTaskExecutableMatch -Expected $info.actionExecutable -Actual $report.actualAction.execute) -and
-      [string]::Equals($info.actionArguments, $report.actualAction.arguments, [System.StringComparison]::OrdinalIgnoreCase)
+    $Report.actualAction.execute = if ($null -ne $commandNode) { $commandNode.InnerText } else { $null }
+    $Report.actualAction.arguments = if ($null -ne $argumentsNode) { $argumentsNode.InnerText } else { $null }
+    $Report.matches = (
+      (Test-ServiceRestartTaskExecutableMatch -Expected $TaskInfo.actionExecutable -Actual $Report.actualAction.execute) -and
+      [string]::Equals($TaskInfo.actionArguments, $Report.actualAction.arguments, [System.StringComparison]::OrdinalIgnoreCase)
     )
 
-    return $report
+    return $Report
   } catch {
     $message = $_.Exception.Message
     $hresult = $_.Exception.HResult
     if ($hresult -eq -2147024891 -or $message -match 'Access is denied') {
-      $report.exists = $true
-      $report.matches = $true
-      $report.state = 'Unknown'
-      return $report
+      $Report.exists = $true
+      $Report.matches = $true
+      $Report.state = 'Unknown'
+      return $Report
     }
 
-    return $report
+    return $Report
   } finally {
     if ($null -ne $service) {
       [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($service)
@@ -1534,33 +1841,25 @@ function Test-ServiceRestartTaskExecutableMatch {
   )
 }
 
-function Get-ServiceRestartTaskStatus {
+function Get-ScheduledTaskStatusReport {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)]
-    [hashtable]$Config
+    [hashtable]$TaskInfo,
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Report
   )
 
-  $info = Get-ServiceRestartTaskInfo -Config $Config
-  $report = New-EmptyServiceRestartTaskStatusReport
-  $report.taskPath = $info.taskPath
-  $report.taskName = $info.taskName
-  $report.fullTaskName = $info.fullTaskName
-  $report.scriptPath = $info.scriptPath
-  $report.logPath = $info.logPath
-  $report.description = $info.description
-  $report.expectedAction.execute = $info.actionExecutable
-  $report.expectedAction.arguments = $info.actionArguments
-
+  Set-ScheduledTaskStatusReportFromInfo -Report $Report -TaskInfo $TaskInfo | Out-Null
   $task = $null
   try {
-    $task = Get-ScheduledTask -TaskPath $info.taskPath -TaskName $info.taskName -ErrorAction Stop
+    $task = Get-ScheduledTask -TaskPath $TaskInfo.taskPath -TaskName $TaskInfo.taskName -ErrorAction Stop
   } catch {
-    return (Get-ServiceRestartTaskStatusViaCom -Config $Config)
+    return (Get-ScheduledTaskStatusViaCom -TaskInfo $TaskInfo -Report $Report)
   }
 
-  $report.exists = $true
-  $report.state = $task.State.ToString()
+  $Report.exists = $true
+  $Report.state = $task.State.ToString()
 
   $action = $null
   if ($null -ne $task.Actions) {
@@ -1571,16 +1870,145 @@ function Get-ServiceRestartTaskStatus {
   }
 
   if ($null -ne $action) {
-    $report.actualAction.execute = $action.Execute
-    $report.actualAction.arguments = $action.Arguments
+    $Report.actualAction.execute = $action.Execute
+    $Report.actualAction.arguments = $action.Arguments
   }
 
-  $report.matches = (
-    (Test-ServiceRestartTaskExecutableMatch -Expected $info.actionExecutable -Actual $report.actualAction.execute) -and
-    [string]::Equals($info.actionArguments, $report.actualAction.arguments, [System.StringComparison]::OrdinalIgnoreCase)
+  $Report.matches = (
+    (Test-ServiceRestartTaskExecutableMatch -Expected $TaskInfo.actionExecutable -Actual $Report.actualAction.execute) -and
+    [string]::Equals($TaskInfo.actionArguments, $Report.actualAction.arguments, [System.StringComparison]::OrdinalIgnoreCase)
   )
 
-  return $report
+  return $Report
+}
+
+function Get-ServiceRestartTaskStatus {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  $info = Get-ServiceRestartTaskInfo -Config $Config
+  $report = New-EmptyServiceRestartTaskStatusReport
+  return (Get-ScheduledTaskStatusReport -TaskInfo $info -Report $report)
+}
+
+function Get-ServiceControlTaskStatus {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action
+  )
+
+  $info = Get-ServiceControlTaskInfo -Config $Config -Action $Action
+  $report = New-EmptyServiceControlTaskStatusReport -Action $Action
+  return (Get-ScheduledTaskStatusReport -TaskInfo $info -Report $report)
+}
+
+function Get-ServiceControlTaskStatuses {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  return [ordered]@{
+    start   = Get-ServiceControlTaskStatus -Config $Config -Action 'start'
+    stop    = Get-ServiceControlTaskStatus -Config $Config -Action 'stop'
+    restart = Get-ServiceControlTaskStatus -Config $Config -Action 'restart'
+  }
+}
+
+function Register-WrapperScheduledTask {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskInfo
+  )
+
+  try {
+    $action = New-ScheduledTaskAction -Execute $TaskInfo.actionExecutable -Argument $TaskInfo.actionArguments -WorkingDirectory $script:RepoRoot
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+      -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries `
+      -StartWhenAvailable `
+      -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+
+    Register-ScheduledTask `
+      -TaskPath $TaskInfo.taskPath `
+      -TaskName $TaskInfo.taskName `
+      -Action $action `
+      -Principal $principal `
+      -Settings $settings `
+      -Description $TaskInfo.description `
+      -Force | Out-Null
+  } catch {
+    $taskCommand = Format-ServiceScheduledTaskCommandLine -TaskInfo $TaskInfo
+    Invoke-SchtasksCommand -Arguments @(
+      '/Create',
+      '/TN', $TaskInfo.fullTaskName,
+      '/SC', 'ONCE',
+      '/ST', '23:59',
+      '/RU', 'SYSTEM',
+      '/RL', 'HIGHEST',
+      '/TR', $taskCommand,
+      '/F'
+    ) | Out-Null
+  }
+
+  return $TaskInfo.fullTaskName
+}
+
+function Remove-WrapperScheduledTask {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskInfo
+  )
+
+  try {
+    Get-ScheduledTask -TaskPath $TaskInfo.taskPath -TaskName $TaskInfo.taskName -ErrorAction Stop | Out-Null
+  } catch {
+    $query = Invoke-SchtasksCommand -Arguments @('/Query', '/TN', $TaskInfo.fullTaskName) -AllowFailure
+    if ($query.exitCode -ne 0) {
+      return $false
+    }
+
+    Invoke-SchtasksCommand -Arguments @('/Delete', '/TN', $TaskInfo.fullTaskName, '/F') | Out-Null
+    return $true
+  }
+
+  Unregister-ScheduledTask -TaskPath $TaskInfo.taskPath -TaskName $TaskInfo.taskName -Confirm:$false
+  return $true
+}
+
+function Start-WrapperScheduledTask {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskInfo
+  )
+
+  try {
+    Start-ScheduledTask -TaskPath $TaskInfo.taskPath -TaskName $TaskInfo.taskName -ErrorAction Stop
+    return $true
+  } catch {
+    $result = Invoke-SchtasksCommand -Arguments @('/Run', '/TN', $TaskInfo.fullTaskName) -AllowFailure
+    if ($result.exitCode -ne 0) {
+      if ([string]::IsNullOrWhiteSpace($result.output)) {
+        throw "Failed to start scheduled task '$($TaskInfo.fullTaskName)'."
+      }
+
+      throw "Failed to start scheduled task '$($TaskInfo.fullTaskName)': $($result.output)"
+    }
+  }
+
+  return $true
 }
 
 function Register-ServiceRestartTask {
@@ -1591,38 +2019,21 @@ function Register-ServiceRestartTask {
   )
 
   $info = Get-ServiceRestartTaskInfo -Config $Config
-  try {
-    $action = New-ScheduledTaskAction -Execute $info.actionExecutable -Argument $info.actionArguments -WorkingDirectory $script:RepoRoot
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet `
-      -AllowStartIfOnBatteries `
-      -DontStopIfGoingOnBatteries `
-      -StartWhenAvailable `
-      -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+  return (Register-WrapperScheduledTask -TaskInfo $info)
+}
 
-    Register-ScheduledTask `
-      -TaskPath $info.taskPath `
-      -TaskName $info.taskName `
-      -Action $action `
-      -Principal $principal `
-      -Settings $settings `
-      -Description $info.description `
-      -Force | Out-Null
-  } catch {
-    $taskCommand = Format-ServiceRestartTaskCommandLine -TaskInfo $info
-    Invoke-SchtasksCommand -Arguments @(
-      '/Create',
-      '/TN', $info.fullTaskName,
-      '/SC', 'ONCE',
-      '/ST', '23:59',
-      '/RU', 'SYSTEM',
-      '/RL', 'HIGHEST',
-      '/TR', $taskCommand,
-      '/F'
-    ) | Out-Null
+function Register-ServiceControlTasks {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  return [ordered]@{
+    start   = Register-WrapperScheduledTask -TaskInfo (Get-ServiceControlTaskInfo -Config $Config -Action 'start')
+    stop    = Register-WrapperScheduledTask -TaskInfo (Get-ServiceControlTaskInfo -Config $Config -Action 'stop')
+    restart = Register-ServiceRestartTask -Config $Config
   }
-
-  return $info.fullTaskName
 }
 
 function Remove-ServiceRestartTask {
@@ -1632,21 +2043,21 @@ function Remove-ServiceRestartTask {
     [hashtable]$Config
   )
 
-  $info = Get-ServiceRestartTaskInfo -Config $Config
-  try {
-    Get-ScheduledTask -TaskPath $info.taskPath -TaskName $info.taskName -ErrorAction Stop | Out-Null
-  } catch {
-    $query = Invoke-SchtasksCommand -Arguments @('/Query', '/TN', $info.fullTaskName) -AllowFailure
-    if ($query.exitCode -ne 0) {
-      return $false
-    }
+  return (Remove-WrapperScheduledTask -TaskInfo (Get-ServiceRestartTaskInfo -Config $Config))
+}
 
-    Invoke-SchtasksCommand -Arguments @('/Delete', '/TN', $info.fullTaskName, '/F') | Out-Null
-    return $true
+function Remove-ServiceControlTasks {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config
+  )
+
+  return [ordered]@{
+    start   = Remove-WrapperScheduledTask -TaskInfo (Get-ServiceControlTaskInfo -Config $Config -Action 'start')
+    stop    = Remove-WrapperScheduledTask -TaskInfo (Get-ServiceControlTaskInfo -Config $Config -Action 'stop')
+    restart = Remove-ServiceRestartTask -Config $Config
   }
-
-  Unregister-ScheduledTask -TaskPath $info.taskPath -TaskName $info.taskName -Confirm:$false
-  return $true
 }
 
 function Get-ServiceExecutablePathFromPathName {
@@ -1894,14 +2305,76 @@ function Escape-XmlText {
 }
 
 function Format-PowerShellCommandArguments {
+  [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)]
     [string]$ScriptPath,
-    [Parameter(Mandatory = $true)]
-    [string]$ConfigPath
+    [string]$ConfigPath,
+    [hashtable]$AdditionalNamedArguments = @{}
   )
 
-  return "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
+  $arguments = @(
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    ('"{0}"' -f $ScriptPath)
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $arguments += @(
+      '-ConfigPath',
+      ('"{0}"' -f $ConfigPath)
+    )
+  }
+
+  foreach ($key in ($AdditionalNamedArguments.Keys | Sort-Object)) {
+    $value = $AdditionalNamedArguments[$key]
+    if ($value -is [switch]) {
+      if ([bool]$value) {
+        $arguments += "-$key"
+      }
+
+      continue
+    }
+
+    if ($value -is [bool]) {
+      if ([bool]$value) {
+        $arguments += "-$key"
+      }
+
+      continue
+    }
+
+    $arguments += "-$key"
+    $arguments += ('"{0}"' -f "$value")
+  }
+
+  return ($arguments -join ' ')
+}
+
+function Join-ProcessArgumentString {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Arguments
+  )
+
+  $quoted = foreach ($argument in $Arguments) {
+    if ([string]::IsNullOrEmpty($argument)) {
+      '""'
+      continue
+    }
+
+    if ($argument -match '[\s"]') {
+      '"{0}"' -f $argument.Replace('"', '\"')
+      continue
+    }
+
+    $argument
+  }
+
+  return ($quoted -join ' ')
 }
 
 function Split-ServiceCredentialUser {
@@ -2087,6 +2560,43 @@ function Resolve-OpenClawCommandPath {
   throw "openclaw.cmd could not be found in PATH or under $programsRoot."
 }
 
+function Resolve-OpenClawLaunchSpec {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [hashtable]$IdentityContext = (Get-ServiceIdentityContext -Mode 'currentUser')
+  )
+
+  $requestedCommandPath = Resolve-OpenClawCommandPath -Config $Config -IdentityContext $IdentityContext
+  $executablePath = $requestedCommandPath
+  $preArguments = @()
+  $launchMode = 'directCommand'
+  $entryScriptPath = $null
+
+  if ($requestedCommandPath -match '\.cmd$') {
+    $commandDirectory = Split-Path -Parent $requestedCommandPath
+    $nodeExecutablePath = Join-Path $commandDirectory 'node.exe'
+    $candidateEntryScriptPath = Join-Path $commandDirectory 'node_modules\openclaw\openclaw.mjs'
+    if ((Test-Path -LiteralPath $nodeExecutablePath) -and (Test-Path -LiteralPath $candidateEntryScriptPath)) {
+      $executablePath = $nodeExecutablePath
+      $preArguments = @($candidateEntryScriptPath)
+      $entryScriptPath = $candidateEntryScriptPath
+      $launchMode = 'directNodeFromCmdShim'
+    } else {
+      $launchMode = 'cmdShim'
+    }
+  }
+
+  return @{
+    requestedCommandPath = $requestedCommandPath
+    executablePath       = $executablePath
+    preArguments         = @($preArguments)
+    entryScriptPath      = $entryScriptPath
+    launchMode           = $launchMode
+  }
+}
+
 function Get-ServiceDetails {
   [CmdletBinding()]
   param(
@@ -2207,8 +2717,20 @@ function Get-ServiceRecoveryContext {
     $runState = $null
   }
   $wrapperProcessId = 0
+  $gatewayProcessId = 0
+  $recordedListenerProcessIds = @()
+  $launchMode = $null
   if ($null -ne $runState -and $runState.ContainsKey('wrapperProcessId')) {
     $wrapperProcessId = [int]$runState.wrapperProcessId
+  }
+  if ($null -ne $runState -and $runState.ContainsKey('gatewayProcessId')) {
+    $gatewayProcessId = [int]$runState.gatewayProcessId
+  }
+  if ($null -ne $runState -and $runState.ContainsKey('listenerProcessIds')) {
+    $recordedListenerProcessIds = Normalize-RunStateProcessIdList -Value $runState.listenerProcessIds
+  }
+  if ($null -ne $runState -and $runState.ContainsKey('launchMode')) {
+    $launchMode = "$($runState.launchMode)"
   }
 
   $listeners = @()
@@ -2232,8 +2754,9 @@ function Get-ServiceRecoveryContext {
   )
 
   $knownProcessIds = @(
-    @($service.processId, $wrapperProcessId) +
-    $listenerProcessIds
+    $listenerProcessIds +
+    $recordedListenerProcessIds +
+    @($gatewayProcessId, $wrapperProcessId, $service.processId)
   ) | Where-Object { $_ -gt 0 } | Sort-Object -Unique
 
   $existingProcessIds = @(
@@ -2256,15 +2779,20 @@ function Get-ServiceRecoveryContext {
   $service.pending = $isPending
   $service.stuckStopping = $isStuckStopping
   $service.wrapperProcessId = $wrapperProcessId
+  $service.gatewayProcessId = $gatewayProcessId
   $service.listenerProcessIds = $listenerProcessIds
+  $service.recordedListenerProcessIds = $recordedListenerProcessIds
+  $service.launchMode = $launchMode
 
   return @{
     service                        = $service
     runState                       = $runState
     status                         = $status
     wrapperProcessId               = $wrapperProcessId
+    gatewayProcessId               = $gatewayProcessId
     listeners                      = $listeners
     listenerProcessIds             = $listenerProcessIds
+    recordedListenerProcessIds     = $recordedListenerProcessIds
     knownProcessIds                = $knownProcessIds
     existingProcessIds             = $existingProcessIds
     isPending                      = $isPending
@@ -2275,7 +2803,99 @@ function Get-ServiceRecoveryContext {
     isPortOccupiedWhileServiceNotRunning = $isPortOccupiedWhileServiceNotRunning
     isStuckStopping                = $isStuckStopping
     needsStartRecovery             = $needsStartRecovery
+    launchMode                     = $launchMode
   }
+}
+
+function Normalize-RunStateProcessIdList {
+  [CmdletBinding()]
+  param(
+    [AllowNull()]
+    $Value
+  )
+
+  $processIds = @()
+  foreach ($item in @($Value)) {
+    $processId = 0
+    if ([int]::TryParse("$item", [ref]$processId) -and $processId -gt 0) {
+      $processIds += $processId
+    }
+  }
+
+  return @($processIds | Sort-Object -Unique)
+}
+
+function Test-ServiceRuntimeProcessesStopped {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Context
+  )
+
+  foreach ($processId in @(
+      @($Context.listenerProcessIds) +
+      @($Context.recordedListenerProcessIds) +
+      @($Context.gatewayProcessId, $Context.wrapperProcessId)
+    ) | Where-Object { $_ -gt 0 } | Sort-Object -Unique) {
+    if (Test-ProcessExists -ProcessId $processId) {
+      return $false
+    }
+  }
+
+  return (-not $Context.hasPortListeners)
+}
+
+function Get-ServiceRuntimeTerminationTargets {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Context,
+    [switch]$IncludeServiceProcess
+  )
+
+  $targets = [System.Collections.ArrayList]::new()
+  $seen = @{}
+
+  function Add-TerminationTarget {
+    param(
+      [int]$ProcessId,
+      [string]$Kind,
+      [bool]$IncludeChildren
+    )
+
+    if ($ProcessId -le 0) {
+      return
+    }
+
+    $key = "$ProcessId"
+    if ($seen.ContainsKey($key)) {
+      return
+    }
+
+    $seen[$key] = $true
+    [void]$targets.Add(@{
+      processId       = $ProcessId
+      kind            = $Kind
+      includeChildren = $IncludeChildren
+    })
+  }
+
+  foreach ($processId in @($Context.listenerProcessIds)) {
+    Add-TerminationTarget -ProcessId $processId -Kind 'listener' -IncludeChildren $false
+  }
+
+  foreach ($processId in @($Context.recordedListenerProcessIds)) {
+    Add-TerminationTarget -ProcessId $processId -Kind 'recordedListener' -IncludeChildren $false
+  }
+
+  Add-TerminationTarget -ProcessId $Context.gatewayProcessId -Kind 'gateway' -IncludeChildren $true
+  Add-TerminationTarget -ProcessId $Context.wrapperProcessId -Kind 'wrapper' -IncludeChildren $true
+
+  if ($IncludeServiceProcess -and $null -ne $Context.service) {
+    Add-TerminationTarget -ProcessId ([int]$Context.service.processId) -Kind 'service' -IncludeChildren $true
+  }
+
+  return @($targets)
 }
 
 function Get-ServiceRecoveryIssueMessage {
@@ -2316,12 +2936,12 @@ function Invoke-ServiceResidualCleanup {
   $initialContext = Get-ServiceRecoveryContext -Config $Config
   $treeStopped = Stop-RecordedServiceProcessTree -Config $Config -TimeoutSec $TimeoutSec
   $currentContext = Get-ServiceRecoveryContext -Config $Config
-  $remainingProcessIds = @($currentContext.knownProcessIds | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+  $terminationTargets = @(Get-ServiceRuntimeTerminationTargets -Context $currentContext -IncludeServiceProcess)
   $attemptedProcessIds = @()
 
-  foreach ($processId in $remainingProcessIds) {
-    $attemptedProcessIds += $processId
-    Invoke-TaskKill -ProcessId $processId
+  foreach ($target in $terminationTargets) {
+    $attemptedProcessIds += $target.processId
+    [void](Stop-ProcessIdWithFallbacks -ProcessId $target.processId -IncludeChildren:$target.includeChildren)
   }
 
   $deadline = (Get-Date).AddSeconds($TimeoutSec)
@@ -2342,13 +2962,11 @@ function Invoke-ServiceResidualCleanup {
   } while ((Get-Date) -lt $deadline)
 
   $currentContext = Get-ServiceRecoveryContext -Config $Config
-  foreach ($processId in @($currentContext.existingProcessIds | Sort-Object -Unique)) {
-    if ($processId -gt 0) {
-      if ($attemptedProcessIds -notcontains $processId) {
-        $attemptedProcessIds += $processId
-      }
-      Invoke-TaskKill -ProcessId $processId -Force
+  foreach ($target in @(Get-ServiceRuntimeTerminationTargets -Context $currentContext -IncludeServiceProcess)) {
+    if ($attemptedProcessIds -notcontains $target.processId) {
+      $attemptedProcessIds += $target.processId
     }
+    [void](Stop-ProcessIdWithFallbacks -ProcessId $target.processId -Force -IncludeChildren:$target.includeChildren)
   }
 
   Start-Sleep -Seconds 2
@@ -2503,6 +3121,296 @@ function Restart-ManagedServiceWithRecovery {
   }
 }
 
+function Get-ServiceActionResultMessage {
+  [CmdletBinding()]
+  param(
+    [AllowNull()]
+    $Result,
+    [string]$Fallback = $null
+  )
+
+  foreach ($item in @($Result)) {
+    if ($item -is [System.Collections.IDictionary]) {
+      if ($item.Contains('message') -and -not [string]::IsNullOrWhiteSpace("$($item.message)")) {
+        return "$($item.message)"
+      }
+
+      continue
+    }
+
+    if ($null -ne $item -and ($item.PSObject.Properties.Name -contains 'message') -and -not [string]::IsNullOrWhiteSpace("$($item.message)")) {
+      return "$($item.message)"
+    }
+  }
+
+  foreach ($item in @($Result)) {
+    if ($item -is [string] -and -not [string]::IsNullOrWhiteSpace($item)) {
+      return $item.Trim()
+    }
+  }
+
+  return $Fallback
+}
+
+function Get-ServiceControlTaskFailureMessage {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$TaskStatus
+  )
+
+  if (-not $TaskStatus.exists) {
+    return "Control task '$($TaskStatus.fullTaskName)' is missing. Reinstall the service to restore SYSTEM-backed lifecycle control."
+  }
+
+  if (-not $TaskStatus.matches) {
+    return "Control task '$($TaskStatus.fullTaskName)' does not match the expected wrapper action. Reinstall the service to restore SYSTEM-backed lifecycle control."
+  }
+
+  return $null
+}
+
+function Wait-ForServiceControlResult {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action,
+    [Parameter(Mandatory = $true)]
+    [string]$RequestId,
+    [int]$TimeoutSec = 90
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    $result = $null
+    try {
+      $result = Read-ServiceControlResult -Config $Config -Action $Action
+    } catch {
+      $result = $null
+    }
+
+    if ($null -ne $result -and [string]::Equals("$($result.requestId)", $RequestId, [System.StringComparison]::OrdinalIgnoreCase)) {
+      return $result
+    }
+
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+
+  $taskInfo = Get-ServiceControlTaskInfo -Config $Config -Action $Action
+  return @{
+    serviceName  = $Config.serviceName
+    action       = $Action
+    requestId    = $RequestId
+    success      = $false
+    busy         = $false
+    message      = "Timed out waiting for control task '$($taskInfo.fullTaskName)' to finish. Run doctor.ps1 or reinstall the service if the control bridge is missing."
+    error        = "Timed out waiting for control task '$($taskInfo.fullTaskName)' to report completion within $TimeoutSec seconds."
+    requestedAt  = $null
+    startedAt    = $null
+    completedAt  = (Get-Date).ToString('o')
+    writtenAt    = (Get-Date).ToString('o')
+    origin       = 'interactive'
+    requester    = Get-CurrentWindowsIdentityName
+  }
+}
+
+function Invoke-ServiceControlAction {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action,
+    [int]$TimeoutSec = 90
+  )
+
+  $taskStatus = Get-ServiceControlTaskStatus -Config $Config -Action $Action
+  $failureMessage = Get-ServiceControlTaskFailureMessage -TaskStatus $taskStatus
+  if (-not [string]::IsNullOrWhiteSpace($failureMessage)) {
+    throw $failureMessage
+  }
+
+  $mutex = New-Object System.Threading.Mutex($false, (Get-ServiceControlMutexName -ServiceName $Config.serviceName))
+  $hasHandle = $false
+  $requestId = [guid]::NewGuid().ToString('N')
+  $requestTime = Get-Date
+  try {
+    try {
+      $hasHandle = $mutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+      $hasHandle = $true
+    }
+
+    if (-not $hasHandle) {
+      return @{
+        serviceName  = $Config.serviceName
+        action       = $Action
+        requestId    = $requestId
+        success      = $false
+        busy         = $true
+        message      = 'Another service action is already in progress.'
+        error        = 'Another service action is already in progress.'
+        requestedAt  = $requestTime.ToString('o')
+        startedAt    = $null
+        completedAt  = $requestTime.ToString('o')
+        writtenAt    = $requestTime.ToString('o')
+        origin       = 'interactive'
+        requester    = Get-CurrentWindowsIdentityName
+      }
+    }
+
+    $taskInfo = Get-ServiceControlTaskInfo -Config $Config -Action $Action
+    $request = @{
+      serviceName = $Config.serviceName
+      requestId   = $requestId
+      action      = $Action
+      origin      = 'interactive'
+      requester   = Get-CurrentWindowsIdentityName
+      processId   = $PID
+      requestedAt = $requestTime.ToString('o')
+    }
+
+    if (Test-Path -LiteralPath $taskInfo.resultPath) {
+      Remove-Item -LiteralPath $taskInfo.resultPath -Force
+    }
+
+    Write-ServiceControlRequest -Config $Config -Action $Action -Request $request | Out-Null
+    Write-ServiceControlState -Config $Config -State @{
+      serviceName = $Config.serviceName
+      action      = $Action
+      requestId   = $requestId
+      origin      = $request.origin
+      requester   = $request.requester
+      processId   = $request.processId
+      requestedAt = $request.requestedAt
+      status      = 'requested'
+      success     = $null
+      message     = "Queued '$Action' request for SYSTEM control bridge."
+      error       = $null
+      startedAt   = $null
+      completedAt = $null
+    } | Out-Null
+    Write-ServiceControlAudit -Config $Config -Action $Action -Message "queued request $requestId from $($request.requester)."
+
+    Start-WrapperScheduledTask -TaskInfo $taskInfo | Out-Null
+    return (Wait-ForServiceControlResult -Config $Config -Action $Action -RequestId $requestId -TimeoutSec $TimeoutSec)
+  } finally {
+    if ($hasHandle) {
+      try {
+        $mutex.ReleaseMutex()
+      } catch {
+      }
+    }
+
+    if ($null -ne $mutex) {
+      $mutex.Dispose()
+    }
+  }
+}
+
+function Invoke-ServiceControlTaskAction {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('start', 'stop', 'restart')]
+    [string]$Action,
+    [string]$Origin = 'task'
+  )
+
+  $taskInfo = Get-ServiceControlTaskInfo -Config $Config -Action $Action
+  $request = Read-ServiceControlRequest -Config $Config -Action $Action
+  if ($null -eq $request -or -not [string]::Equals("$($request.action)", $Action, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $request = @{
+      serviceName = $Config.serviceName
+      requestId   = [guid]::NewGuid().ToString('N')
+      action      = $Action
+      origin      = $Origin
+      requester   = Get-CurrentWindowsIdentityName
+      processId   = $PID
+      requestedAt = (Get-Date).ToString('o')
+    }
+  }
+
+  $startedAt = Get-Date
+  Write-ServiceControlState -Config $Config -State @{
+    serviceName = $Config.serviceName
+    action      = $Action
+    requestId   = $request.requestId
+    origin      = $request.origin
+    requester   = $request.requester
+    processId   = $request.processId
+    requestedAt = $request.requestedAt
+    startedAt   = $startedAt.ToString('o')
+    completedAt = $null
+    status      = 'running'
+    success     = $null
+    message     = "Running '$Action' through SYSTEM control bridge."
+    error       = $null
+  } | Out-Null
+  Write-ServiceControlAudit -Config $Config -Action $Action -Message "processing request $($request.requestId) from $($request.origin)."
+
+  $message = $null
+  $errorMessage = $null
+  $success = $false
+  try {
+    $actionResult = switch ($Action) {
+      'start' { Start-ManagedServiceWithRecovery -Config $Config -TimeoutSec 30 }
+      'stop' { Stop-ManagedServiceWithRecovery -Config $Config -TimeoutSec 30 }
+      'restart' { Restart-ManagedServiceWithRecovery -Config $Config -TimeoutSec 30 }
+    }
+
+    $message = Get-ServiceActionResultMessage -Result $actionResult -Fallback "Service action '$Action' completed."
+    $success = $true
+  } catch {
+    $message = $_.Exception.Message
+    $errorMessage = $_.Exception.Message
+    $success = $false
+  }
+
+  $completedAt = Get-Date
+  $result = @{
+    serviceName  = $Config.serviceName
+    action       = $Action
+    requestId    = $request.requestId
+    success      = $success
+    busy         = $false
+    message      = $message
+    error        = $errorMessage
+    requestedAt  = $request.requestedAt
+    startedAt    = $startedAt.ToString('o')
+    completedAt  = $completedAt.ToString('o')
+    writtenAt    = $completedAt.ToString('o')
+    origin       = $request.origin
+    requester    = $request.requester
+  }
+
+  Write-ServiceControlResult -Config $Config -Action $Action -Result $result | Out-Null
+  Write-ServiceControlState -Config $Config -State @{
+    serviceName = $Config.serviceName
+    action      = $Action
+    requestId   = $request.requestId
+    origin      = $request.origin
+    requester   = $request.requester
+    processId   = $request.processId
+    requestedAt = $request.requestedAt
+    startedAt   = $startedAt.ToString('o')
+    completedAt = $completedAt.ToString('o')
+    status      = if ($success) { 'completed' } else { 'failed' }
+    success     = $success
+    message     = $message
+    error       = $errorMessage
+  } | Out-Null
+  Write-ServiceControlAudit -Config $Config -Action $Action -Message "$(if ($success) { 'completed' } else { 'failed' }) request $($request.requestId): $message"
+
+  return $result
+}
+
 function Invoke-WinSWCommand {
   [CmdletBinding()]
   param(
@@ -2513,9 +3421,14 @@ function Invoke-WinSWCommand {
   )
 
   $exePath = Resolve-ManagedExecutablePath -Config $Config
-  & $exePath $Command
+  $output = & $exePath $Command 2>&1 | ForEach-Object { "$_" }
   if ($LASTEXITCODE -ne 0) {
-    throw "WinSW command '$Command' failed with exit code $LASTEXITCODE."
+    $text = ($output -join [Environment]::NewLine).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+      throw "WinSW command '$Command' failed with exit code $LASTEXITCODE."
+    }
+
+    throw "WinSW command '$Command' failed with exit code ${LASTEXITCODE}: $text"
   }
 }
 
@@ -2556,6 +3469,27 @@ function Get-PortListeners {
   }
 
   return @($listeners | Where-Object { $null -ne $_ } | Sort-Object processId -Unique)
+}
+
+function Wait-ForPortListeners {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [int]$Port,
+    [int]$TimeoutSec = 10
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  do {
+    $listeners = @(Get-PortListeners -Port $Port)
+    if ($listeners.Count -gt 0) {
+      return $listeners
+    }
+
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+
+  return @()
 }
 
 function Invoke-HealthCheck {
@@ -2638,6 +3572,9 @@ function Write-RunState {
 
   $layout = Get-ServiceArtifactLayout -Config $Config
   Ensure-Directory -Path $Config.runtimeStateDirectory
+  if ($State.ContainsKey('listenerProcessIds')) {
+    $State.listenerProcessIds = @(Normalize-RunStateProcessIdList -Value $State.listenerProcessIds)
+  }
   Set-Content -LiteralPath $layout.stateFilePath -Value ($State | ConvertTo-Json -Depth 10) -Encoding UTF8
   return $layout.stateFilePath
 }
@@ -2676,21 +3613,116 @@ function Test-ProcessExists {
 }
 
 function Invoke-TaskKill {
+  [CmdletBinding()]
   param(
     [int]$ProcessId,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$IncludeChildren = $true
   )
 
   if ($ProcessId -le 0 -or -not (Test-ProcessExists -ProcessId $ProcessId)) {
-    return
+    return @{
+      attempted = $false
+      success   = $true
+      exitCode  = 0
+      output    = $null
+    }
   }
 
-  $arguments = @('/PID', $ProcessId, '/T')
+  $arguments = @('/PID', $ProcessId)
+  if ($IncludeChildren) {
+    $arguments += '/T'
+  }
   if ($Force) {
     $arguments += '/F'
   }
 
-  & taskkill @arguments *> $null
+  $stdoutPath = Join-Path $env:TEMP "openclaw-taskkill-$([guid]::NewGuid().ToString('N')).out.txt"
+  $stderrPath = Join-Path $env:TEMP "openclaw-taskkill-$([guid]::NewGuid().ToString('N')).err.txt"
+  try {
+    $process = Start-Process `
+      -FilePath 'taskkill.exe' `
+      -ArgumentList (Join-ProcessArgumentString -Arguments ($arguments | ForEach-Object { "$_" })) `
+      -WindowStyle Hidden `
+      -Wait `
+      -PassThru `
+      -RedirectStandardOutput $stdoutPath `
+      -RedirectStandardError $stderrPath
+    $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { '' }
+    $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { '' }
+    $output = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+    return @{
+      attempted = $true
+      success   = (($process.ExitCode -eq 0) -or -not (Test-ProcessExists -ProcessId $ProcessId))
+      exitCode  = $process.ExitCode
+      output    = $output.Trim()
+    }
+  } finally {
+    foreach ($path in @($stdoutPath, $stderrPath)) {
+      if (Test-Path -LiteralPath $path) {
+        Remove-Item -LiteralPath $path -Force
+      }
+    }
+  }
+}
+
+function Stop-ProcessIdWithFallbacks {
+  [CmdletBinding()]
+  param(
+    [int]$ProcessId,
+    [switch]$Force,
+    [switch]$IncludeChildren
+  )
+
+  if ($ProcessId -le 0 -or -not (Test-ProcessExists -ProcessId $ProcessId)) {
+    return @{
+      processId = $ProcessId
+      success   = $true
+      method    = 'alreadyExited'
+      output    = $null
+    }
+  }
+
+  $taskKillResult = Invoke-TaskKill -ProcessId $ProcessId -Force:$Force -IncludeChildren:$IncludeChildren
+  if (-not (Test-ProcessExists -ProcessId $ProcessId)) {
+    return @{
+      processId = $ProcessId
+      success   = $true
+      method    = 'taskkill'
+      output    = $taskKillResult.output
+    }
+  }
+
+  try {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+  } catch {
+  }
+
+  Start-Sleep -Milliseconds 300
+  if (-not (Test-ProcessExists -ProcessId $ProcessId)) {
+    return @{
+      processId = $ProcessId
+      success   = $true
+      method    = 'Stop-Process'
+      output    = $taskKillResult.output
+    }
+  }
+
+  try {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+    if ($null -ne $process) {
+      [void](Invoke-CimMethod -InputObject $process -MethodName Terminate -Arguments @{ Reason = 0 } -ErrorAction SilentlyContinue)
+    }
+  } catch {
+  }
+
+  Start-Sleep -Milliseconds 300
+  return @{
+    processId = $ProcessId
+    success   = (-not (Test-ProcessExists -ProcessId $ProcessId))
+    method    = 'Terminate'
+    output    = $taskKillResult.output
+  }
 }
 
 function Stop-RecordedServiceProcessTree {
@@ -2701,34 +3733,31 @@ function Stop-RecordedServiceProcessTree {
     [int]$TimeoutSec = 15
   )
 
-  $state = Read-RunState -Config $Config
-  $serviceDetails = Get-ServiceDetails -ServiceName $Config.serviceName
-  $wrapperProcessId = 0
-
-  if ($null -ne $state -and $state.ContainsKey('wrapperProcessId')) {
-    $wrapperProcessId = [int]$state.wrapperProcessId
-  } elseif ($serviceDetails.installed -and $serviceDetails.processId -gt 0) {
-    $wrapperProcessId = [int]$serviceDetails.processId
-  }
-
-  if ($wrapperProcessId -le 0) {
+  $initialContext = Get-ServiceRecoveryContext -Config $Config
+  $targets = @(Get-ServiceRuntimeTerminationTargets -Context $initialContext)
+  if ($targets.Count -eq 0) {
     return $false
   }
 
-  Invoke-TaskKill -ProcessId $wrapperProcessId
+  foreach ($target in $targets) {
+    [void](Stop-ProcessIdWithFallbacks -ProcessId $target.processId -IncludeChildren:$target.includeChildren)
+  }
 
   $deadline = (Get-Date).AddSeconds($TimeoutSec)
   while ((Get-Date) -lt $deadline) {
-    if (-not (Test-ProcessExists -ProcessId $wrapperProcessId)) {
+    $currentContext = Get-ServiceRecoveryContext -Config $Config
+    if (Test-ServiceRuntimeProcessesStopped -Context $currentContext) {
       return $true
     }
 
     Start-Sleep -Milliseconds 500
   }
 
-  Invoke-TaskKill -ProcessId $wrapperProcessId -Force
+  foreach ($target in @(Get-ServiceRuntimeTerminationTargets -Context (Get-ServiceRecoveryContext -Config $Config))) {
+    [void](Stop-ProcessIdWithFallbacks -ProcessId $target.processId -Force -IncludeChildren:$target.includeChildren)
+  }
   Start-Sleep -Seconds 2
-  return (-not (Test-ProcessExists -ProcessId $wrapperProcessId))
+  return (Test-ServiceRuntimeProcessesStopped -Context (Get-ServiceRecoveryContext -Config $Config))
 }
 
 function Remove-GeneratedArtifacts {
@@ -3077,8 +4106,16 @@ function Set-TrayStatusSnapshotStale {
 
 Export-ModuleMember -Function `
   Clear-RememberedServiceConfigSelection, `
+  ConvertTo-Hashtable, `
   Get-CurrentWindowsIdentityName, `
+  Get-ServiceControlArtifactPaths, `
+  Get-ServiceControlMutexName, `
+  Get-ServiceControlTaskFailureMessage, `
+  Get-ServiceControlTaskInfo, `
+  Get-ServiceControlTaskStatus, `
+  Get-ServiceControlTaskStatuses, `
   New-EmptyServiceRestartTaskStatusReport, `
+  New-EmptyServiceControlTaskStatusReport, `
   Get-TrayControllerLauncherArguments, `
   Get-TrayControllerLauncherPath, `
   Get-ServiceRestartTaskInfo, `
@@ -3096,6 +4133,7 @@ Export-ModuleMember -Function `
   Get-TrayControllerPaths, `
   New-TrayStatusSnapshot, `
   Get-ExpectedServiceStartName, `
+  Get-WindowsPowerShellExecutablePath, `
   Get-ServiceAccountIdentityContext, `
   Get-ServiceArtifactLayout, `
   Get-ServiceConfig, `
@@ -3116,15 +4154,24 @@ Export-ModuleMember -Function `
   Invoke-WinSWCommand, `
   Disable-ServiceStartForReinstall, `
   Install-TrayStartupShortcut, `
+  Invoke-ServiceControlAction, `
+  Invoke-ServiceControlTaskAction, `
+  Join-ProcessArgumentString, `
   Register-ServiceRestartTask, `
+  Register-ServiceControlTasks, `
   Read-RememberedServiceConfigSelection, `
+  Read-ServiceControlRequest, `
+  Read-ServiceControlResult, `
+  Read-ServiceControlState, `
   Read-RunState, `
   Remove-GeneratedArtifacts, `
+  Remove-ServiceControlTasks, `
   Remove-ServiceRestartTask, `
   Remove-TrayStartupShortcut, `
   Render-WinSWServiceXml, `
   Resolve-ManagedExecutablePath, `
   Resolve-OpenClawCommandPath, `
+  Resolve-OpenClawLaunchSpec, `
   Resolve-ServiceAccountPlan, `
   Resolve-ServiceConfig, `
   Resolve-ServiceConfigSelection, `
@@ -3137,12 +4184,20 @@ Export-ModuleMember -Function `
   Stop-RecordedServiceProcessTree, `
   Stop-ManagedServiceWithRecovery, `
   Test-IsBuiltInServiceAccount, `
+  Test-IsCurrentProcessElevated, `
   Test-IsPendingServiceStatus, `
   Test-ServiceAccountMatch, `
+  Update-ServiceControlState, `
   Update-RunState, `
   Invoke-ServiceResidualCleanup, `
   Wait-ForServiceRemoval, `
+  Wait-ForServiceControlResult, `
   Wait-ForServiceStatus, `
+  Wait-ForPortListeners, `
+  Write-ServiceControlAudit, `
+  Write-ServiceControlRequest, `
+  Write-ServiceControlResult, `
+  Write-ServiceControlState, `
   Write-TrayStateCache, `
   Write-RememberedServiceConfigSelection, `
   Write-RunState, `

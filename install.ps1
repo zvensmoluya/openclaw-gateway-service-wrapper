@@ -3,7 +3,8 @@ param(
   [string]$ConfigPath,
   [pscredential]$Credential,
   [switch]$Force,
-  [switch]$SkipTray
+  [switch]$SkipTray,
+  [switch]$Elevated
 )
 
 Set-StrictMode -Version Latest
@@ -11,11 +12,58 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
 
+function Get-InstallElevationArguments {
+  [CmdletBinding()]
+  param()
+
+  $arguments = @(
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    (Join-Path $PSScriptRoot 'install.ps1'),
+    '-Elevated'
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $arguments += @('-ConfigPath', $ConfigPath)
+  }
+
+  if ($Force) {
+    $arguments += '-Force'
+  }
+
+  if ($SkipTray) {
+    $arguments += '-SkipTray'
+  }
+
+  return $arguments
+}
+
 try {
-  $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
   $bootstrapIdentity = Get-ServiceIdentityContext -Mode 'currentUser'
   $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath
   $bootstrapConfig = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $bootstrapIdentity
+
+  if (-not $Elevated -and -not (Test-IsCurrentProcessElevated)) {
+    if ($null -ne $Credential -and $bootstrapConfig.serviceAccountMode -eq 'localSystem') {
+      throw "serviceAccountMode 'localSystem' does not accept -Credential."
+    }
+
+    if ($null -ne $Credential) {
+      throw "install.ps1 cannot forward -Credential through UAC self-elevation. Re-run from an elevated PowerShell if you need to pass -Credential explicitly, or omit -Credential and let the elevated installer prompt for it."
+    }
+
+    $elevatedProcess = Start-Process `
+      -FilePath (Get-WindowsPowerShellExecutablePath) `
+      -ArgumentList (Join-ProcessArgumentString -Arguments (Get-InstallElevationArguments)) `
+      -Verb RunAs `
+      -Wait `
+      -PassThru
+    exit $elevatedProcess.ExitCode
+  }
+
+  $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
   $serviceAccountPlan = Resolve-ServiceAccountPlan -Config $bootstrapConfig -Credential $Credential -CurrentWindowsIdentityName $currentWindowsIdentityName -PromptForCredential
   $installCredential = $serviceAccountPlan.credential
   if ($serviceAccountPlan.deprecatedAlias) {
@@ -39,9 +87,15 @@ try {
   $serviceDetails = Get-ServiceDetails -ServiceName $config.serviceName
   if ($serviceDetails.installed) {
     Write-Host "Reinstalling existing service '$($config.serviceName)'."
+    Write-Host "Preparing SYSTEM control bridge for safe reinstall."
+
+    $existingControlTaskNames = Register-ServiceControlTasks -Config $config
 
     [void](Disable-ServiceStartForReinstall -ServiceName $config.serviceName)
-    [void](Stop-ManagedServiceWithRecovery -Config $config -TimeoutSec 30)
+    $stopBridgeResult = Invoke-ServiceControlAction -Config $config -Action 'stop' -TimeoutSec 60
+    if (-not $stopBridgeResult.success) {
+      throw $stopBridgeResult.message
+    }
 
     try {
       Invoke-WinSWCommand -Config $config -Command 'uninstall'
@@ -66,7 +120,8 @@ try {
 
   Invoke-WinSWCommand -Config $config -Command 'install'
   try {
-    $restartTaskName = Register-ServiceRestartTask -Config $config
+    $controlTaskNames = Register-ServiceControlTasks -Config $config
+    $restartTaskName = $controlTaskNames.restart
   } catch {
     try {
       Invoke-WinSWCommand -Config $config -Command 'uninstall'
@@ -74,7 +129,7 @@ try {
       Write-Warning "Service '$($config.serviceName)' was installed but restart task registration failed and automatic rollback also failed."
     }
 
-    throw "Failed to register restart task for service '$($config.serviceName)': $($_.Exception.Message)"
+    throw "Failed to register SYSTEM control tasks for service '$($config.serviceName)': $($_.Exception.Message)"
   }
 
   Invoke-WinSWCommand -Config $config -Command 'start'
@@ -109,6 +164,8 @@ try {
   Write-Host "Run as       : $($installedService.startName)"
   Write-Host "Port         : $($config.port)"
   Write-Host "WinSW home   : $($layout.generatedDirectory)"
+  Write-Host "Start task   : $($controlTaskNames.start)"
+  Write-Host "Stop task    : $($controlTaskNames.stop)"
   Write-Host "Restart task : $restartTaskName"
   Write-Host "Health URL   : $($config.healthUrl)"
   Write-Host "Tray startup : $trayStatus"

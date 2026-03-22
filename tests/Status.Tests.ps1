@@ -92,6 +92,67 @@ Describe 'status.ps1' {
         service              = $ServiceDetails
       }
     }
+
+    function script:New-MatchingControlTasks {
+      param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Config
+      )
+
+      return [ordered]@{
+        start   = @{
+          action         = 'start'
+          taskPath       = '\OpenClaw\'
+          taskName       = "$($Config.serviceName)-Start"
+          fullTaskName   = "\OpenClaw\$($Config.serviceName)-Start"
+          scriptPath     = 'control-service-task.ps1'
+          logPath        = "logs\$($Config.serviceName).control-start.log"
+          requestPath    = ".runtime\$($Config.serviceName).control-start.request.json"
+          resultPath     = ".runtime\$($Config.serviceName).control-start.result.json"
+          statePath      = ".runtime\$($Config.serviceName).control-state.json"
+          description    = 'control bridge'
+          exists         = $true
+          state          = 'Ready'
+          matches        = $true
+          expectedAction = @{ execute = 'powershell.exe'; arguments = 'expected-start' }
+          actualAction   = @{ execute = 'powershell.exe'; arguments = 'expected-start' }
+        }
+        stop    = @{
+          action         = 'stop'
+          taskPath       = '\OpenClaw\'
+          taskName       = "$($Config.serviceName)-Stop"
+          fullTaskName   = "\OpenClaw\$($Config.serviceName)-Stop"
+          scriptPath     = 'control-service-task.ps1'
+          logPath        = "logs\$($Config.serviceName).control-stop.log"
+          requestPath    = ".runtime\$($Config.serviceName).control-stop.request.json"
+          resultPath     = ".runtime\$($Config.serviceName).control-stop.result.json"
+          statePath      = ".runtime\$($Config.serviceName).control-state.json"
+          description    = 'control bridge'
+          exists         = $true
+          state          = 'Ready'
+          matches        = $true
+          expectedAction = @{ execute = 'powershell.exe'; arguments = 'expected-stop' }
+          actualAction   = @{ execute = 'powershell.exe'; arguments = 'expected-stop' }
+        }
+        restart = @{
+          action         = 'restart'
+          taskPath       = '\OpenClaw\'
+          taskName       = "$($Config.serviceName)-Restart"
+          fullTaskName   = "\OpenClaw\$($Config.serviceName)-Restart"
+          scriptPath     = 'restart-service-task.ps1'
+          logPath        = "logs\$($Config.serviceName).restart-task.log"
+          requestPath    = ".runtime\$($Config.serviceName).control-restart.request.json"
+          resultPath     = ".runtime\$($Config.serviceName).control-restart.result.json"
+          statePath      = ".runtime\$($Config.serviceName).control-state.json"
+          description    = 'restart bridge'
+          exists         = $true
+          state          = 'Ready'
+          matches        = $true
+          expectedAction = @{ execute = 'powershell.exe'; arguments = 'expected-restart' }
+          actualAction   = @{ execute = 'powershell.exe'; arguments = 'expected-restart' }
+        }
+      }
+    }
   }
 
   BeforeEach {
@@ -195,6 +256,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -270,6 +332,7 @@ Describe 'status.ps1' {
           }
         }
       }
+      Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
       Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
       $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -344,6 +407,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -411,6 +475,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -477,6 +542,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
@@ -548,6 +614,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep
@@ -621,6 +688,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     [void](& $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep)
@@ -699,6 +767,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json -TraySnapshot -RefreshKind deep
@@ -786,6 +855,7 @@ Describe 'status.ps1' {
         }
       }
     }
+    Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
     Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
     Mock Get-ServiceRecoveryIssueMessage { $stuckMessage }
 

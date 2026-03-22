@@ -32,6 +32,7 @@ try {
 
   $rootFiles = @(
     'CHANGELOG.md',
+    'control-service-task.ps1',
     'CONTRIBUTING.md',
     'LICENSE',
     'README.md',
@@ -39,6 +40,7 @@ try {
     'build-release.ps1',
     'doctor.ps1',
     'install.ps1',
+    'invoke-service-action.ps1',
     'invoke-tray-action.ps1',
     'reinstall-service-elevated.ps1',
     'restart.ps1',

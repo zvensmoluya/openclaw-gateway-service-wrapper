@@ -68,4 +68,45 @@ Describe 'Service restart task helpers' {
     $status.matches | Should -BeFalse
     $status.actualAction.arguments | Should -Be '-NoProfile -ExecutionPolicy Bypass -File "C:\wrong.ps1"'
   }
+
+  It 'builds deterministic SYSTEM control task definitions for start and stop' {
+    $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+    $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
+
+    $startTask = Get-ServiceControlTaskInfo -Config $config -Action 'start'
+    $stopTask = Get-ServiceControlTaskInfo -Config $config -Action 'stop'
+
+    Assert-Equal $startTask.fullTaskName '\OpenClaw\OpenClawService-Start'
+    Assert-Equal $stopTask.fullTaskName '\OpenClaw\OpenClawService-Stop'
+    Assert-MatchPattern $startTask.scriptPath 'control-service-task\.ps1$'
+    Assert-MatchPattern $stopTask.scriptPath 'control-service-task\.ps1$'
+    Assert-MatchPattern $startTask.actionArguments '-Action "start"'
+    Assert-MatchPattern $stopTask.actionArguments '-Action "stop"'
+  }
+
+  It 'reports matching registered control task actions' {
+    $identity = Get-ServiceIdentityContext -Mode 'currentUser'
+    $config = Get-ServiceConfig -ConfigPath (Join-Path $repoRoot 'service-config.json') -IdentityContext $identity
+    $taskInfo = Get-ServiceControlTaskInfo -Config $config -Action 'start'
+
+    Mock Get-ScheduledTask -ModuleName $script:moduleName {
+      @{
+        State   = 'Ready'
+        Actions = @(
+          @{
+            Execute   = $taskInfo.actionExecutable
+            Arguments = $taskInfo.actionArguments
+          }
+        )
+      }
+    }
+
+    $status = Get-ServiceControlTaskStatus -Config $config -Action 'start'
+
+    $status.exists | Should -BeTrue
+    $status.matches | Should -BeTrue
+    $status.fullTaskName | Should -Be '\OpenClaw\OpenClawService-Start'
+    $status.requestPath | Should -Match 'control-start\.request\.json$'
+    $status.resultPath | Should -Match 'control-start\.result\.json$'
+  }
 }

@@ -12,6 +12,37 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
 
+function New-EmptyControlTaskReportSet {
+  return [ordered]@{
+    start   = New-EmptyServiceControlTaskStatusReport -Action 'start'
+    stop    = New-EmptyServiceControlTaskStatusReport -Action 'stop'
+    restart = New-EmptyServiceControlTaskStatusReport -Action 'restart'
+  }
+}
+
+function Get-RecoveryContextProcessIdList {
+  param(
+    [AllowNull()]
+    $Context,
+    [Parameter(Mandatory = $true)]
+    [string]$PropertyName
+  )
+
+  if ($null -eq $Context) {
+    return @()
+  }
+
+  if (($Context -is [System.Collections.IDictionary]) -and $Context.Contains($PropertyName)) {
+    return @($Context[$PropertyName])
+  }
+
+  if ($Context.PSObject.Properties.Name -contains $PropertyName) {
+    return @($Context.$PropertyName)
+  }
+
+  return @()
+}
+
 function New-StatusErrorReport {
   param(
     [Parameter(Mandatory = $true)]
@@ -53,6 +84,9 @@ function New-StatusErrorReport {
     installed   = $service.installed
     service     = $service
     restartTask = New-EmptyServiceRestartTaskStatusReport
+    controlTasks = (New-EmptyControlTaskReportSet)
+    controlState = $null
+    runtime    = $null
     proxy       = New-EmptyWrapperProxyStatusReport
     health      = @{
       ok         = $false
@@ -94,8 +128,13 @@ function Get-FullStatusContext {
   $config = $trayContext.config
   $recoveryContext = Get-ServiceRecoveryContext -Config $config
   $service = $recoveryContext.service
+  $runtimeState = Read-RunState -Config $config
+  $liveListenerProcessIds = Get-RecoveryContextProcessIdList -Context $recoveryContext -PropertyName 'listenerProcessIds'
+  $recordedListenerProcessIds = Get-RecoveryContextProcessIdList -Context $recoveryContext -PropertyName 'recordedListenerProcessIds'
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
   $restartTask = Get-ServiceRestartTaskStatus -Config $config
+  $controlTasks = Get-ServiceControlTaskStatuses -Config $config
+  $controlState = Read-ServiceControlState -Config $config
   $proxy = Get-WrapperProxyStatusReport -Config $config
   $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
   $warnings = [System.Collections.ArrayList]::new()
@@ -143,6 +182,15 @@ function Get-FullStatusContext {
     $issues += "Restart task '$($restartTask.fullTaskName)' does not match the expected wrapper action. Reinstall the service to restore intentional restart bridging."
   }
 
+  foreach ($action in @('start', 'stop')) {
+    $controlTask = $controlTasks[$action]
+    if ($service.installed -and -not $controlTask.exists) {
+      $issues += "Control task '$($controlTask.fullTaskName)' for '$action' is missing. Reinstall the service to restore SYSTEM-backed lifecycle control."
+    } elseif ($service.installed -and -not $controlTask.matches) {
+      $issues += "Control task '$($controlTask.fullTaskName)' for '$action' does not match the expected wrapper action. Reinstall the service to restore SYSTEM-backed lifecycle control."
+    }
+  }
+
   if (-not $health.ok) {
     $issues += "Health endpoint is not healthy: $($health.error)"
   }
@@ -153,6 +201,18 @@ function Get-FullStatusContext {
     installed   = $service.installed
     service     = $service
     restartTask = $restartTask
+    controlTasks = $controlTasks
+    controlState = $controlState
+    runtime    = @{
+      launchMode               = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('launchMode')) { $runtimeState.launchMode } else { $null }
+      requestedCommandPath     = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('openclawCommand')) { $runtimeState.openclawCommand } else { $null }
+      effectiveExecutablePath  = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('effectiveExecutablePath')) { $runtimeState.effectiveExecutablePath } else { $null }
+      entryScriptPath          = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('entryScriptPath')) { $runtimeState.entryScriptPath } else { $null }
+      wrapperProcessId         = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('wrapperProcessId')) { $runtimeState.wrapperProcessId } else { 0 }
+      gatewayProcessId         = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('gatewayProcessId')) { $runtimeState.gatewayProcessId } else { 0 }
+      liveListenerProcessIds   = @($liveListenerProcessIds)
+      recordedListenerProcessIds = @($recordedListenerProcessIds)
+    }
     proxy       = $proxy
     health      = $health
     healthUrl   = $config.healthUrl
@@ -312,6 +372,9 @@ function Write-FullStatusReport {
   $identity = $Report.identity
   $service = $Report.service
   $restartTask = $Report.restartTask
+  $controlTasks = $Report.controlTasks
+  $controlState = $Report.controlState
+  $runtime = $Report.runtime
   $proxy = $Report.proxy
   $health = $Report.health
   $warnings = @($Report.warnings)
@@ -332,6 +395,21 @@ function Write-FullStatusReport {
   Write-Host "Restart task : $($restartTask.fullTaskName)"
   Write-Host "Task status  : $($restartTask.state)"
   Write-Host "Task matches : $($restartTask.matches)"
+  Write-Host "Start task   : $($controlTasks.start.fullTaskName)"
+  Write-Host "Start ok     : $($controlTasks.start.matches)"
+  Write-Host "Stop task    : $($controlTasks.stop.fullTaskName)"
+  Write-Host "Stop ok      : $($controlTasks.stop.matches)"
+  Write-Host "Control run  : $(if ($null -ne $controlState) { $controlState.status } else { $null })"
+  Write-Host "Launch mode  : $(if ($null -ne $runtime) { $runtime.launchMode } else { $null })"
+  Write-Host "Gateway PID  : $(if ($null -ne $runtime) { $runtime.gatewayProcessId } else { 0 })"
+  $listenersText = if ($null -eq $runtime) {
+    ''
+  } elseif (@($runtime.liveListenerProcessIds).Count -gt 0) {
+    @($runtime.liveListenerProcessIds) -join ','
+  } else {
+    @($runtime.recordedListenerProcessIds) -join ','
+  }
+  Write-Host "Listeners    : $listenersText"
   Write-Host "HTTP proxy   : $($proxy.httpProxy.value) [$($proxy.httpProxy.source)]"
   Write-Host "HTTPS proxy  : $($proxy.httpsProxy.value) [$($proxy.httpsProxy.source)]"
   Write-Host "ALL proxy    : $($proxy.allProxy.value) [$($proxy.allProxy.source)]"

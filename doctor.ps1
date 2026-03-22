@@ -12,6 +12,14 @@ Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1')
 $issues = @()
 $warnings = [System.Collections.ArrayList]::new()
 
+function New-EmptyControlTaskReportSet {
+  return [ordered]@{
+    start   = New-EmptyServiceControlTaskStatusReport -Action 'start'
+    stop    = New-EmptyServiceControlTaskStatusReport -Action 'stop'
+    restart = New-EmptyServiceControlTaskStatusReport -Action 'restart'
+  }
+}
+
 try {
   $currentWindowsIdentityName = Get-CurrentWindowsIdentityName
   $emptyWarnings = [System.Collections.ArrayList]::new()
@@ -55,6 +63,9 @@ try {
         bind                = $null
       }
       restartTask = New-EmptyServiceRestartTaskStatusReport
+      controlTasks = (New-EmptyControlTaskReportSet)
+      controlState = $null
+      runtime = $null
       proxy = New-EmptyWrapperProxyStatusReport
       identity = $identity
       warnings = $emptyWarnings
@@ -98,8 +109,12 @@ try {
   $config.configSource = $selection.configSource
   $config.rememberedPath = $selection.rememberedPath
   $layout = Get-ServiceArtifactLayout -Config $config
+  $runtimeState = Read-RunState -Config $config
+  $recoveryContext = Get-ServiceRecoveryContext -Config $config
   $identity = Get-ServiceIdentityReport -Config $config -ServiceDetails $service -CurrentWindowsIdentityName $currentWindowsIdentityName
   $restartTask = Get-ServiceRestartTaskStatus -Config $config
+  $controlTasks = Get-ServiceControlTaskStatuses -Config $config
+  $controlState = Read-ServiceControlState -Config $config
   $proxy = Get-WrapperProxyStatusReport -Config $config
   $reportedWinSWExecutable = if ($service.installed -and -not [string]::IsNullOrWhiteSpace($service.pathName)) {
     Get-ServiceExecutablePathFromPathName -PathName $service.pathName
@@ -166,6 +181,15 @@ try {
     $issues += "Restart task '$($restartTask.fullTaskName)' does not match the expected wrapper action. Reinstall the service to restore intentional restart bridging."
   }
 
+  foreach ($action in @('start', 'stop')) {
+    $controlTask = $controlTasks[$action]
+    if ($service.installed -and -not $controlTask.exists) {
+      $issues += "Control task '$($controlTask.fullTaskName)' for '$action' is missing. Reinstall the service to restore SYSTEM-backed lifecycle control."
+    } elseif ($service.installed -and -not $controlTask.matches) {
+      $issues += "Control task '$($controlTask.fullTaskName)' for '$action' does not match the expected wrapper action. Reinstall the service to restore SYSTEM-backed lifecycle control."
+    }
+  }
+
   if ($service.installed -and -not $health.ok) {
     $issues += "Health endpoint is not healthy: $($health.error)"
   }
@@ -188,6 +212,18 @@ try {
       bind               = $config.bind
     }
     restartTask = $restartTask
+    controlTasks = $controlTasks
+    controlState = $controlState
+    runtime = @{
+      launchMode               = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('launchMode')) { $runtimeState.launchMode } else { $null }
+      requestedCommandPath     = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('openclawCommand')) { $runtimeState.openclawCommand } else { $null }
+      effectiveExecutablePath  = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('effectiveExecutablePath')) { $runtimeState.effectiveExecutablePath } else { $null }
+      entryScriptPath          = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('entryScriptPath')) { $runtimeState.entryScriptPath } else { $null }
+      wrapperProcessId         = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('wrapperProcessId')) { $runtimeState.wrapperProcessId } else { 0 }
+      gatewayProcessId         = if ($null -ne $runtimeState -and $runtimeState.ContainsKey('gatewayProcessId')) { $runtimeState.gatewayProcessId } else { 0 }
+      liveListenerProcessIds   = @($recoveryContext.listenerProcessIds)
+      recordedListenerProcessIds = @($recoveryContext.recordedListenerProcessIds)
+    }
     proxy = $proxy
     identity = $identity
     warnings = $warnings
@@ -221,6 +257,15 @@ try {
     Write-Host "Restart task      : $($restartTask.fullTaskName)"
     Write-Host "Task status       : $($restartTask.state)"
     Write-Host "Task matches      : $($restartTask.matches)"
+    Write-Host "Start task        : $($controlTasks.start.fullTaskName)"
+    Write-Host "Start task ok     : $($controlTasks.start.matches)"
+    Write-Host "Stop task         : $($controlTasks.stop.fullTaskName)"
+    Write-Host "Stop task ok      : $($controlTasks.stop.matches)"
+    Write-Host "Control state     : $(if ($null -ne $controlState) { $controlState.status } else { $null })"
+    Write-Host "Launch mode       : $($report.runtime.launchMode)"
+    Write-Host "Gateway PID       : $($report.runtime.gatewayProcessId)"
+    Write-Host "Live listeners    : $((@($report.runtime.liveListenerProcessIds) -join ','))"
+    Write-Host "Recorded listeners: $((@($report.runtime.recordedListenerProcessIds) -join ','))"
     Write-Host "HTTP proxy        : $($proxy.httpProxy.value) [$($proxy.httpProxy.source)]"
     Write-Host "HTTPS proxy       : $($proxy.httpsProxy.value) [$($proxy.httpsProxy.source)]"
     Write-Host "ALL proxy         : $($proxy.allProxy.value) [$($proxy.allProxy.source)]"

@@ -18,8 +18,9 @@ try {
   $stopped = Stop-RecordedServiceProcessTree -Config $config -TimeoutSec $TimeoutSec
   if ($stopped) {
     Update-RunState -Config $config -Patch @{
-      stoppedAt = (Get-Date).ToString('o')
-      status    = 'stopped'
+      stoppedAt        = (Get-Date).ToString('o')
+      status           = 'stopped'
+      listenerProcessIds = @()
     }
     Write-Host "Stopped the recorded process tree for '$($config.serviceName)'."
   } else {

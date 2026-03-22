@@ -6,14 +6,5 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
-
-try {
-  $config = Resolve-ServiceConfig -ConfigPath $ConfigPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
-  $result = Restart-ManagedServiceWithRecovery -Config $config -TimeoutSec 30
-  Write-Host $result.message
-  exit 0
-} catch {
-  Write-Error $_
-  exit 1
-}
+& (Join-Path $PSScriptRoot 'invoke-service-action.ps1') -Action 'restart' -ConfigPath $ConfigPath
+exit $LASTEXITCODE

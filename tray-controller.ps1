@@ -845,23 +845,6 @@ function Invoke-ScheduledRefresh {
   }
 }
 
-function Test-IsElevationCanceled {
-  param(
-    [Parameter(Mandatory = $true)]
-    $Exception
-  )
-
-  if ($Exception -is [System.ComponentModel.Win32Exception] -and $Exception.NativeErrorCode -eq 1223) {
-    return $true
-  }
-
-  if ($Exception.HResult -eq -2147023673) {
-    return $true
-  }
-
-  return ($Exception.Message -match 'cancel')
-}
-
 function Invoke-TrayAction {
   param(
     [Parameter(Mandatory = $true)]
@@ -880,7 +863,7 @@ function Invoke-TrayAction {
 
   $resultPath = Join-Path $env:TEMP "openclaw-tray-action-$([guid]::NewGuid().ToString('N')).json"
   try {
-    $helperScript = Join-Path $PSScriptRoot 'invoke-tray-action.ps1'
+    $helperScript = Join-Path $PSScriptRoot 'invoke-service-action.ps1'
     $arguments = @(
       '-NoProfile',
       '-WindowStyle',
@@ -902,21 +885,15 @@ function Invoke-TrayAction {
     Write-TrayLog -Message "Starting tray action '$Action'."
     $script:actionProcess = Start-Process -FilePath (Get-WindowsPowerShellExecutablePath) `
       -ArgumentList (ConvertTo-ArgumentString -Arguments $arguments) `
-      -Verb RunAs `
       -WindowStyle Hidden `
       -PassThru
     $script:actionName = $Action
     $script:actionResultPath = $resultPath
     Refresh-TrayPresentation
   } catch {
-    if (Test-IsElevationCanceled -Exception $_.Exception) {
-      Write-TrayLog -Level 'WARN' -Message "Tray action '$Action' was canceled at the UAC prompt."
-      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text 'Action canceled at the UAC prompt.' -Icon ([System.Windows.Forms.ToolTipIcon]::Warning)
-    } else {
-      $message = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback "Service action '$Action' failed."
-      Write-TrayLog -Level 'ERROR' -Message "Tray action '$Action' failed: $message"
-      Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $message -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
-    }
+    $message = Get-PrimaryOutputMessage -Lines @($_.Exception.Message) -Fallback "Service action '$Action' failed."
+    Write-TrayLog -Level 'ERROR' -Message "Tray action '$Action' failed: $message"
+    Show-TrayBalloon -Title (Get-TrayBalloonTitle) -Text $message -Icon ([System.Windows.Forms.ToolTipIcon]::Error)
   } finally {
     if ($null -eq $script:actionProcess) {
       if (Test-Path -LiteralPath $resultPath) {

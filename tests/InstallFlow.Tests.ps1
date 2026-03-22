@@ -1,8 +1,17 @@
-Describe 'install.ps1 restart-task flow' {
+Describe 'install.ps1 control-task flow' {
   BeforeAll {
     $script:repoRoot = Split-Path -Parent $PSScriptRoot
     Import-Module (Join-Path $script:repoRoot 'src\OpenClawGatewayServiceWrapper.psm1') -Force -DisableNameChecking
     $script:installScript = Join-Path $script:repoRoot 'install.ps1'
+    $script:installScriptText = Get-Content $script:installScript -Raw
+    $script:uninstallScriptText = Get-Content (Join-Path $script:repoRoot 'uninstall.ps1') -Raw
+    $script:rememberedMetadataPath = Get-RememberedConfigMetadataPath
+    $script:rememberedMetadataBackup = $null
+
+    if (Test-Path -LiteralPath $script:rememberedMetadataPath) {
+      $script:rememberedMetadataBackup = Join-Path $env:TEMP "installflow-active-config-backup-$([guid]::NewGuid()).json"
+      Copy-Item -LiteralPath $script:rememberedMetadataPath -Destination $script:rememberedMetadataBackup -Force
+    }
 
     function script:New-InstallTestConfig {
       param(
@@ -51,7 +60,17 @@ Describe 'install.ps1 restart-task flow' {
     }
   }
 
-  It 'fails closed when restart task registration fails' {
+  AfterAll {
+    [void](Clear-RememberedServiceConfigSelection)
+
+    if ($null -ne $script:rememberedMetadataBackup -and (Test-Path -LiteralPath $script:rememberedMetadataBackup)) {
+      New-Item -ItemType Directory -Path (Split-Path -Parent $script:rememberedMetadataPath) -Force | Out-Null
+      Copy-Item -LiteralPath $script:rememberedMetadataBackup -Destination $script:rememberedMetadataPath -Force
+      Remove-Item -LiteralPath $script:rememberedMetadataBackup -Force
+    }
+  }
+
+  It 'fails closed when SYSTEM control task registration fails' {
     $configPath = New-InstallTestConfig
     $script:testPaths += $configPath
     $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
@@ -88,7 +107,7 @@ Describe 'install.ps1 restart-task flow' {
       param($Config, $Command)
       [void]$commands.Add($Command)
     }
-    Mock Register-ServiceRestartTask { throw 'simulated restart-task registration failure' }
+    Mock Register-ServiceControlTasks { throw 'simulated control-task registration failure' }
     Mock Wait-ForServiceStatus { $true }
     Mock Get-ServiceInstallValidationIssues { @() }
     Mock Write-RememberedServiceConfigSelection { 'remembered.json' }
@@ -102,7 +121,7 @@ Describe 'install.ps1 restart-task flow' {
     }
     Mock Install-TrayStartupShortcut { 'shortcut.lnk' }
 
-    & $script:installScript -ConfigPath $configPath -SkipTray
+    & $script:installScript -ConfigPath $configPath -SkipTray -Elevated
 
     $LASTEXITCODE | Should -Be 1
     @($commands) | Should -Contain 'install'
@@ -141,8 +160,10 @@ Describe 'install.ps1 restart-task flow' {
       }
     }
     Mock Disable-ServiceStartForReinstall { $true }
-    Mock Stop-ManagedServiceWithRecovery {
+    Mock Invoke-ServiceControlAction {
       @{
+        success = $true
+        busy    = $false
         message = "Service '$($config.serviceName)' is stopped."
       }
     }
@@ -154,7 +175,13 @@ Describe 'install.ps1 restart-task flow' {
       param($Config, $Command)
       [void]$commands.Add($Command)
     }
-    Mock Register-ServiceRestartTask { '\OpenClaw\Test-Restart' }
+    Mock Register-ServiceControlTasks {
+      [ordered]@{
+        start   = '\OpenClaw\Test-Start'
+        stop    = '\OpenClaw\Test-Stop'
+        restart = '\OpenClaw\Test-Restart'
+      }
+    }
     Mock Wait-ForServiceStatus { $true }
     Mock Get-ServiceInstallValidationIssues { @() }
     Mock Write-RememberedServiceConfigSelection { 'remembered.json' }
@@ -168,14 +195,25 @@ Describe 'install.ps1 restart-task flow' {
     }
     Mock Install-TrayStartupShortcut { 'shortcut.lnk' }
 
-    & $script:installScript -ConfigPath $configPath -SkipTray
+    & $script:installScript -ConfigPath $configPath -SkipTray -Elevated
 
     $LASTEXITCODE | Should -Be 0
     Should -Invoke Disable-ServiceStartForReinstall -Times 1 -Exactly
-    Should -Invoke Stop-ManagedServiceWithRecovery -Times 1 -Exactly
+    Should -Invoke Invoke-ServiceControlAction -Times 1 -Exactly
     Should -Invoke Wait-ForServiceRemoval -Times 1 -Exactly
+    Should -Invoke Register-ServiceControlTasks -Times 2 -Exactly
     @($commands) | Should -Contain 'uninstall'
     @($commands) | Should -Contain 'install'
     @($commands) | Should -Contain 'start'
+  }
+
+  It 'self-elevates install and uninstall entrypoints before mutating service state' {
+    $script:installScriptText | Should -Match '\[switch\]\$Elevated'
+    $script:installScriptText | Should -Match 'Test-IsCurrentProcessElevated'
+    $script:installScriptText | Should -Match 'Start-Process[\s\S]*-Verb RunAs'
+
+    $script:uninstallScriptText | Should -Match '\[switch\]\$Elevated'
+    $script:uninstallScriptText | Should -Match 'Test-IsCurrentProcessElevated'
+    $script:uninstallScriptText | Should -Match 'Start-Process[\s\S]*-Verb RunAs'
   }
 }

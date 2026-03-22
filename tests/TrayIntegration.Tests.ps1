@@ -17,6 +17,8 @@ Describe 'tray integration wiring' {
   }
 
   It 'includes tray scripts in release packaging' {
+    $script:buildReleaseScriptText | Should -Match 'control-service-task\.ps1'
+    $script:buildReleaseScriptText | Should -Match 'invoke-service-action\.ps1'
     $script:buildReleaseScriptText | Should -Match 'invoke-tray-action\.ps1'
     $script:buildReleaseScriptText | Should -Match 'tray-controller\.ps1'
     $script:buildReleaseScriptText | Should -Match "'assets'"

@@ -17,7 +17,7 @@ try {
 
   $identityContext = Get-ServiceIdentityContext -Mode 'currentUser'
   $config = Get-ServiceConfig -ConfigPath $ConfigPath -IdentityContext $identityContext
-  $openClawCommand = Resolve-OpenClawCommandPath -Config $config -IdentityContext $identityContext
+  $launchSpec = Resolve-OpenClawLaunchSpec -Config $config -IdentityContext $identityContext
   $restartTask = Get-ServiceRestartTaskInfo -Config $config
 
   Ensure-Directory -Path $config.logsDirectory
@@ -58,8 +58,11 @@ try {
   if ($config.allowForceBind) {
     $arguments += '--force'
   }
+  $effectiveArguments = @($launchSpec.preArguments + $arguments)
 
-  Write-Host "OpenClaw command : $openClawCommand"
+  Write-Host "OpenClaw command : $($launchSpec.requestedCommandPath)"
+  Write-Host "Launch mode      : $($launchSpec.launchMode)"
+  Write-Host "Executable path  : $($launchSpec.executablePath)"
   Write-Host "State dir        : $($config.stateDir)"
   Write-Host "Config path      : $($config.gatewayConfigPath)"
   Write-Host "Wrapper PID      : $PID"
@@ -67,33 +70,59 @@ try {
   Write-Host "Restart task     : $($restartTask.fullTaskName)"
 
   Write-RunState -Config $config -State @{
-    serviceName      = $config.serviceName
-    wrapperProcessId = $PID
-    openclawCommand  = $openClawCommand
-    arguments        = $arguments
-    port             = $config.port
-    healthUrl        = $config.healthUrl
-    startedAt        = (Get-Date).ToString('o')
-    status           = 'running'
+    serviceName          = $config.serviceName
+    wrapperProcessId     = $PID
+    gatewayProcessId     = 0
+    listenerProcessIds   = @()
+    openclawCommand      = $launchSpec.requestedCommandPath
+    effectiveExecutablePath = $launchSpec.executablePath
+    entryScriptPath      = $launchSpec.entryScriptPath
+    arguments            = $arguments
+    effectiveArguments   = $effectiveArguments
+    port                 = $config.port
+    healthUrl            = $config.healthUrl
+    launchMode           = $launchSpec.launchMode
+    startedAt            = (Get-Date).ToString('o')
+    status               = 'running'
   } | Out-Null
 
-  & $openClawCommand @arguments
-  $exitCode = $LASTEXITCODE
+  $gatewayProcess = Start-Process `
+    -FilePath $launchSpec.executablePath `
+    -ArgumentList (Join-ProcessArgumentString -Arguments ($effectiveArguments | ForEach-Object { "$_" })) `
+    -WorkingDirectory $PSScriptRoot `
+    -PassThru
 
   Update-RunState -Config $config -Patch @{
-    stoppedAt = (Get-Date).ToString('o')
-    exitCode  = $exitCode
-    status    = 'stopped'
+    gatewayProcessId = $gatewayProcess.Id
+  }
+
+  $listeners = @(Wait-ForPortListeners -Port ([int]$config.port) -TimeoutSec 10)
+  if ($listeners.Count -gt 0) {
+    Update-RunState -Config $config -Patch @{
+      listenerProcessIds = @($listeners | ForEach-Object { [int]$_.processId } | Sort-Object -Unique)
+      listenerObservedAt = (Get-Date).ToString('o')
+    }
+  }
+
+  $gatewayProcess.WaitForExit()
+  $exitCode = $gatewayProcess.ExitCode
+
+  Update-RunState -Config $config -Patch @{
+    stoppedAt        = (Get-Date).ToString('o')
+    exitCode         = $exitCode
+    status           = 'stopped'
+    listenerProcessIds = @()
   }
 
   exit $exitCode
 } catch {
   if ($null -ne $config) {
     Update-RunState -Config $config -Patch @{
-      stoppedAt = (Get-Date).ToString('o')
-      exitCode  = 1
-      status    = 'failed'
-      error     = $_.Exception.Message
+      stoppedAt        = (Get-Date).ToString('o')
+      exitCode         = 1
+      status           = 'failed'
+      listenerProcessIds = @()
+      error            = $_.Exception.Message
     }
   }
 
