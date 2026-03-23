@@ -79,7 +79,7 @@ Describe 'tray controller support' {
       displayName = 'Tray Support Test'
     }
 
-    $shortcutPath = Install-TrayStartupShortcut -Config $config -StartupDirectory $startupDirectory
+    $shortcutPath = Install-TrayStartupShortcut -Config $config -ConfigPath '.\service-config.local.json' -StartupDirectory $startupDirectory
 
     Test-Path -LiteralPath $shortcutPath | Should -BeTrue
     $shortcutPath | Should -Be (Join-Path $startupDirectory 'TraySupportTest Tray Controller.lnk')
@@ -89,6 +89,7 @@ Describe 'tray controller support' {
       $shortcut = $shell.CreateShortcut($shortcutPath)
       $shortcut.TargetPath | Should -Match 'wscript\.exe$'
       $shortcut.Arguments | Should -Match 'tray-controller-launcher\.vbs'
+      $shortcut.Arguments | Should -Match 'service-config\.local\.json'
       $shortcut.Arguments | Should -Not -Match 'powershell\.exe'
     } finally {
       if ($null -ne $shortcut) {

@@ -841,8 +841,12 @@ function Assert-ServiceConfig {
   }
 
   $normalizedMode = $Config.serviceAccountMode.ToString().Trim()
-  if ($normalizedMode -notin @('currentUser', 'credential', 'localSystem')) {
-    throw "serviceAccountMode '$normalizedMode' is not supported. Use currentUser, credential, or localSystem."
+  if ($normalizedMode -eq 'localSystem') {
+    throw "serviceAccountMode 'localSystem' is no longer supported. Reinstall the wrapper as the current Windows user and use that same user's credential."
+  }
+
+  if ($normalizedMode -notin @('currentUser', 'credential')) {
+    throw "serviceAccountMode '$normalizedMode' is not supported. Use credential or currentUser."
   }
 
   if ([string]::IsNullOrWhiteSpace($Config.winswVersion)) {
@@ -1038,7 +1042,7 @@ function Resolve-ServiceAccountPlan {
 
       if ($null -ne $resolvedCredential) {
         if (-not (Test-ServiceAccountMatch -ExpectedAccountName $CurrentWindowsIdentityName -ActualAccountName $resolvedCredential.UserName)) {
-          throw "serviceAccountMode 'currentUser' is deprecated and only supports the current Windows identity '$CurrentWindowsIdentityName'. Pass a matching credential or set serviceAccountMode to 'credential'."
+          throw "serviceAccountMode 'currentUser' is deprecated and only supports the current Windows identity '$CurrentWindowsIdentityName'."
         }
       } elseif ($PromptForCredential) {
         $resolvedCredential = Get-Credential -UserName $CurrentWindowsIdentityName -Message "serviceAccountMode 'currentUser' is deprecated. Enter the password for the current Windows user that should run the OpenClaw service."
@@ -1047,43 +1051,40 @@ function Resolve-ServiceAccountPlan {
         }
 
         if (-not (Test-ServiceAccountMatch -ExpectedAccountName $CurrentWindowsIdentityName -ActualAccountName $resolvedCredential.UserName)) {
-          throw "serviceAccountMode 'currentUser' is deprecated and only supports the current Windows identity '$CurrentWindowsIdentityName'. The credential prompt username must stay on that account; use serviceAccountMode 'credential' to install under a different user."
+          throw "serviceAccountMode 'currentUser' is deprecated and only supports the current Windows identity '$CurrentWindowsIdentityName'. The credential prompt username must stay on that account."
         }
       } else {
         $requiresCredential = $true
       }
     }
     'credential' {
-      if ($null -eq $resolvedCredential) {
-        if ($PromptForCredential) {
-          $resolvedCredential = Get-Credential -Message 'Enter the Windows user account that should run the OpenClaw service.'
-          if ($null -eq $resolvedCredential) {
-            throw 'A PSCredential is required when serviceAccountMode is credential.'
-          }
-        } else {
-          $requiresCredential = $true
+      $expectedStartName = $CurrentWindowsIdentityName
+      $promptUserName = $CurrentWindowsIdentityName
+
+      if ($null -ne $resolvedCredential) {
+        if (-not (Test-ServiceAccountMatch -ExpectedAccountName $CurrentWindowsIdentityName -ActualAccountName $resolvedCredential.UserName)) {
+          throw "serviceAccountMode 'credential' only supports the current Windows identity '$CurrentWindowsIdentityName'. Re-run install while signed in as that user and provide the matching credential."
         }
-      }
+      } elseif ($PromptForCredential) {
+        $resolvedCredential = Get-Credential -UserName $CurrentWindowsIdentityName -Message 'Enter the password for the current Windows user that should run the OpenClaw service.'
+        if ($null -eq $resolvedCredential) {
+          throw 'A PSCredential is required when serviceAccountMode is credential.'
+        }
 
-      if ($null -ne $resolvedCredential) {
-        $expectedStartName = Get-ExpectedServiceStartName -UserName $resolvedCredential.UserName
+        if (-not (Test-ServiceAccountMatch -ExpectedAccountName $CurrentWindowsIdentityName -ActualAccountName $resolvedCredential.UserName)) {
+          throw "serviceAccountMode 'credential' only supports the current Windows identity '$CurrentWindowsIdentityName'. The credential prompt username must stay on that account."
+        }
+      } else {
+        $requiresCredential = $true
       }
-    }
-    'localSystem' {
-      if ($null -ne $resolvedCredential) {
-        throw "serviceAccountMode 'localSystem' does not accept -Credential. Remove -Credential or use serviceAccountMode 'credential' or 'currentUser'."
-      }
-
-      $resolvedCredential = $null
-      $expectedStartName = 'LocalSystem'
     }
     default {
-      throw "serviceAccountMode '$configuredMode' is not supported. Use credential, currentUser, or localSystem."
+      throw "serviceAccountMode '$configuredMode' is not supported. Use credential or currentUser."
     }
   }
 
-  if (($configuredMode -ne 'localSystem') -and ($null -ne $resolvedCredential) -and [string]::IsNullOrEmpty($resolvedCredential.GetNetworkCredential().Password)) {
-    throw "Windows services cannot log on with a blank password for account '$($resolvedCredential.UserName)'. Set a password on that account or use serviceAccountMode 'localSystem'."
+  if (($null -ne $resolvedCredential) -and [string]::IsNullOrEmpty($resolvedCredential.GetNetworkCredential().Password)) {
+    throw "Windows services cannot log on with a blank password for account '$($resolvedCredential.UserName)'. Set a password on that account before installing the wrapper."
   }
 
   $identityContext = if (-not [string]::IsNullOrWhiteSpace($expectedStartName)) {
@@ -1094,7 +1095,7 @@ function Resolve-ServiceAccountPlan {
 
   return @{
     configuredMode     = $configuredMode
-    effectiveMode      = if ($configuredMode -eq 'localSystem') { 'localSystem' } else { 'credential' }
+    effectiveMode      = 'credential'
     deprecatedAlias    = $deprecatedAlias
     expectedStartName  = $expectedStartName
     identityContext    = $identityContext
@@ -2402,7 +2403,7 @@ function Render-WinSWServiceXml {
   param(
     [Parameter(Mandatory = $true)]
     [hashtable]$Config,
-    [ValidateSet('currentUser', 'credential', 'localSystem')]
+    [ValidateSet('currentUser', 'credential')]
     [string]$ServiceAccountMode = 'currentUser',
     [pscredential]$Credential
   )
@@ -2423,10 +2424,6 @@ function Render-WinSWServiceXml {
   }
 
   $serviceAccountBlock = ''
-  if (($ServiceAccountMode -eq 'localSystem') -and ($null -ne $Credential)) {
-    throw "serviceAccountMode 'localSystem' must not render a WinSW serviceaccount block."
-  }
-
   if (($ServiceAccountMode -in @('currentUser', 'credential')) -and ($null -ne $Credential)) {
     $credentialParts = Split-ServiceCredentialUser -UserName $Credential.UserName
     $serviceAccountBlock = @(
@@ -2472,7 +2469,7 @@ function Write-WinSWServiceXml {
   param(
     [Parameter(Mandatory = $true)]
     [hashtable]$Config,
-    [ValidateSet('currentUser', 'credential', 'localSystem')]
+    [ValidateSet('currentUser', 'credential')]
     [string]$ServiceAccountMode = 'currentUser',
     [pscredential]$Credential
   )

@@ -25,18 +25,6 @@ try {
   Ensure-Directory -Path $config.stateDir
   Ensure-Directory -Path (Split-Path -Parent $config.gatewayConfigPath)
 
-  $runtimeHome = if ((Split-Path -Leaf $config.stateDir) -ieq '.openclaw') {
-    Split-Path -Parent $config.stateDir
-  } else {
-    $identityContext.profileRoot
-  }
-  $runtimeLocalAppData = if ((Split-Path -Leaf $config.tempDir) -ieq 'Temp') {
-    Split-Path -Parent $config.tempDir
-  } else {
-    $identityContext.localAppData
-  }
-  $runtimeAppData = Join-Path $runtimeHome 'AppData\Roaming'
-
   $env:OPENCLAW_STATE_DIR = $config.stateDir
   $env:OPENCLAW_CONFIG_PATH = $config.gatewayConfigPath
   $env:OPENCLAW_GATEWAY_PORT = [string]$config.port
@@ -44,13 +32,6 @@ try {
   $env:OPENCLAW_WINDOWS_TASK_NAME = $restartTask.fullTaskName
   $env:OPENCLAW_SERVICE_MARKER = 'openclaw'
   $env:OPENCLAW_SERVICE_KIND = 'gateway'
-  $env:USERPROFILE = $runtimeHome
-  $env:HOME = $runtimeHome
-  $env:LOCALAPPDATA = $runtimeLocalAppData
-  $env:APPDATA = $runtimeAppData
-  $env:TEMP = $config.tempDir
-  $env:TMP = $config.tempDir
-  $env:TMPDIR = $config.tempDir
 
   [void](Set-WrapperProxyEnvironment -Config $config)
 

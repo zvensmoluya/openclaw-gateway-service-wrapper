@@ -40,16 +40,36 @@ function Get-InstallElevationArguments {
   return $arguments
 }
 
+function Wait-ForHealthyServiceInstall {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [hashtable]$Config,
+    [int]$Attempts = 4,
+    [int]$DelaySeconds = 2
+  )
+
+  $lastHealth = $null
+  for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+    $lastHealth = Invoke-HealthCheck -Url $Config.healthUrl -TimeoutSec 8
+    if ($lastHealth.ok) {
+      return $lastHealth
+    }
+
+    if ($attempt -lt $Attempts) {
+      Start-Sleep -Seconds $DelaySeconds
+    }
+  }
+
+  return $lastHealth
+}
+
 try {
   $bootstrapIdentity = Get-ServiceIdentityContext -Mode 'currentUser'
   $selection = Resolve-ServiceConfigSelection -ConfigPath $ConfigPath
   $bootstrapConfig = Get-ServiceConfig -ConfigPath $selection.sourcePath -IdentityContext $bootstrapIdentity
 
   if (-not $Elevated -and -not (Test-IsCurrentProcessElevated)) {
-    if ($null -ne $Credential -and $bootstrapConfig.serviceAccountMode -eq 'localSystem') {
-      throw "serviceAccountMode 'localSystem' does not accept -Credential."
-    }
-
     if ($null -ne $Credential) {
       throw "install.ps1 cannot forward -Credential through UAC self-elevation. Re-run from an elevated PowerShell if you need to pass -Credential explicitly, or omit -Credential and let the elevated installer prompt for it."
     }
@@ -145,12 +165,12 @@ try {
   }
 
   Write-RememberedServiceConfigSelection -SourceConfigPath $config.sourceConfigPath -ServiceName $config.serviceName | Out-Null
-  $health = Invoke-HealthCheck -Url $config.healthUrl -TimeoutSec 8
+  $health = Wait-ForHealthyServiceInstall -Config $config
   $trayStatus = 'Skipped'
 
   if (-not $SkipTray) {
     try {
-      $trayShortcutPath = Install-TrayStartupShortcut -Config $config
+      $trayShortcutPath = Install-TrayStartupShortcut -Config $config -ConfigPath $config.sourceConfigPath
       $trayStatus = "Registered ($trayShortcutPath)"
     } catch {
       $trayStatus = "Failed ($($_.Exception.Message))"

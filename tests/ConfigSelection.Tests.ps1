@@ -202,7 +202,7 @@ Describe 'Wrapper config selection' {
     $after.serviceName | Should -Not -Be ([System.IO.Path]::GetFileNameWithoutExtension($missingConfig))
   }
 
-  It 'does not overwrite remembered config metadata when LocalSystem mode rejects -Credential' {
+  It 'does not overwrite remembered config metadata when localSystem mode is no longer supported' {
     $rememberedConfig = New-TestWrapperConfig -ServiceName 'RememberedWrapperConfig' -Port 19007
     $script:testPaths += $rememberedConfig
 
@@ -230,7 +230,7 @@ $credential = New-Object System.Management.Automation.PSCredential('CONTOSO\svc-
     ) -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 
     $process.ExitCode | Should -Be 1
-    (Get-Content -LiteralPath $stderrPath -Raw) | Should -Match "serviceAccountMode 'localSystem' does not accept -Credential"
+    (Get-Content -LiteralPath $stderrPath -Raw) | Should -Match "serviceAccountMode 'localSystem' is no longer supported"
 
     $after = Wait-ForRememberedConfigSelection
     $after | Should -Not -Be $null

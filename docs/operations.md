@@ -8,7 +8,7 @@ Install with the repository default config:
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-By default, installation prompts for the Windows account that should own the service because `serviceAccountMode` now defaults to `credential`.
+By default, installation prompts for the currently signed-in Windows user's password because `serviceAccountMode` defaults to `credential` and the wrapper now supports a single-user service model only.
 
 Install with an explicit wrapper config:
 
@@ -29,9 +29,9 @@ $credential = Get-Credential
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 ```
 
-If you intentionally use the deprecated `currentUser` alias, `install.ps1` prompts for the current Windows user's password and installs the service under that same account.
+If you intentionally use the deprecated `currentUser` alias, `install.ps1` still prompts for the current Windows user's password and installs the service under that same account.
 
-If you use `serviceAccountMode: localSystem`, do not pass `-Credential`. That combination is rejected before installation so the wrapper cannot accidentally install the service under the explicit credential instead of `LocalSystem`.
+`serviceAccountMode: localSystem` is no longer supported. Reinstall the wrapper as the intended Windows user instead of mixing a built-in service account with that user's profile paths.
 
 After a successful install, the wrapper remembers the wrapper config path in `.runtime/active-config.json`.
 
@@ -117,4 +117,4 @@ Both commands report:
 - Health checks use `http://127.0.0.1:<port>/health`.
 - Default stop behavior targets the recorded service process tree only.
 - If a remembered config path goes stale, operational scripts fail fast until you pass `-ConfigPath` explicitly or reinstall successfully.
-- If `status.ps1` or `doctor.ps1` reports `LocalSystem` or `legacyRoot`, reinstall with explicit credentials rather than masking the issue with Git safety overrides.
+- If `status.ps1` or `doctor.ps1` reports a built-in account such as `LocalSystem` or a `legacyRoot` layout, reinstall the wrapper while signed in as the intended Windows user.

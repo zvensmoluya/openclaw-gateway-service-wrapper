@@ -29,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
-仓库默认现在使用 `serviceAccountMode: credential`，所以安装时会提示输入实际要运行服务的 Windows 账户凭据。这个工具是 Windows Service 包装器，不是“跟随当前登录用户环境”的后台代理。
+仓库默认使用 `serviceAccountMode: credential`，并且现在只支持“当前登录用户”这一种 Windows Service 模型。请在目标 Windows 用户登录后安装，并在提示时输入这个同一用户的密码。这个工具仍然是 Windows Service 包装器，不是“跟随任意当前登录用户环境”的后台代理。
 
 默认情况下，`install.ps1` 还会为当前 Windows 用户注册一个登录后自动出现的 `tray-controller.ps1` 启动项。服务本身仍然作为后台 Windows Service 开机启动，而托盘控制器只会在该用户登录桌面后出现。如果你只想保留服务、不需要托盘入口，可以在安装时传 `-SkipTray`。
 
@@ -69,17 +69,18 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -PurgeTools
 
 ## Wrapper 配置示例
 
-- `service-config.local.example.json`：本地快速安装示例，使用已弃用但兼容的 `currentUser` 别名；底层仍然会安装成一个带凭据的 Windows Service
-- `service-config.credential.example.json`：推荐的服务账号安装示例
+- `service-config.local.example.json`：本地快速安装示例，使用当前 Windows 用户自己的状态目录
+- `service-config.credential.example.json`：显式路径安装示例，仍然安装到当前 Windows 用户
 - `service-config.proxy.example.json`：服务环境需要走代理时可直接复用的 overlay 示例
 - `service-config.custom-port.example.json`：自定义服务名和端口示例
 
 ## 服务账号
 
 - 默认模式是 `credential`
-- `credential` 是推荐的 Windows Service 模式。它要求显式的 Windows 服务账户；如果你不在命令行上传 `-Credential`，安装脚本会交互式提示输入
-- `currentUser` 仍然可用，但只是一个已弃用的兼容别名。它的含义是“提示输入当前 Windows 用户的密码，并把服务安装到这个用户账户下”，不是“在当前交互用户会话里运行”
-- 如果要显式指定要运行服务的账号，可以在安装时传入凭据：
+- `credential` 是支持的 Windows Service 模式。它会把服务安装到当前登录并执行 `install.ps1` 的那个 Windows 用户名下。
+- `currentUser` 仍然可用，但只是一个已弃用的兼容别名；它最终也会收敛到同一个“当前登录用户”模型。
+- `localSystem` 不再受支持，因为它很容易把服务身份、用户 profile 和托盘行为弄乱。
+- 如果安装时显式传入凭据，用户名必须和当前登录的 Windows 用户一致：
 
 ```powershell
 $credential = Get-Credential
@@ -122,4 +123,5 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 0.1.0
 - WinSW 二进制不会直接提交进仓库，而是在安装时下载并做 SHA256 校验
 - 停机逻辑默认使用“精确结束记录下来的服务进程树”，不再按端口扫描后强杀
 - `status.ps1` 和 `doctor.ps1` 会显示 `configSource`、`sourcePath`、`rememberedPath`、服务身份信息，以及脱敏后的代理摘要，方便确认当前到底读的是哪份 wrapper 配置、服务又是以哪个 Windows 账户和哪组 wrapper 代理输入运行
+- `run-gateway.ps1` 现在直接使用服务真实账户自己的 Windows 用户环境，不再在启动时改写 `USERPROFILE`、`APPDATA`、`TEMP` 之类的变量
 - `channels.telegram.proxy` 仍然属于上游 OpenClaw 的模块级配置；wrapper 里的代理字段是服务级环境注入，两者相互独立

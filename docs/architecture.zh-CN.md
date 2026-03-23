@@ -43,11 +43,11 @@
 ## 服务身份与路径解析
 
 - 默认模式是 `credential`
-- `credential` 是主模型。安装时会按选定的 Windows 服务账户解析身份相关路径，并在 WinSW XML 里写出 `<serviceaccount>`
+- `credential` 是主模型。安装时会按当前登录的 Windows 用户解析身份相关路径，并在 WinSW XML 里写出这个同一用户的 `<serviceaccount>`
 - `currentUser` 仍保留为已弃用兼容别名，只表示“提示输入当前 Windows 用户的密码，并把服务安装到这个账户下”
-- 如果 WinSW XML 里没有 `<serviceaccount>`，Windows 会把服务安装成 `LocalSystem`。Wrapper 现在会显式检测并报告这种不匹配
+- `localSystem` 不再是受支持的 wrapper 模式。如果 WinSW XML 里没有 `<serviceaccount>`，Windows 会把服务安装成 `LocalSystem`，wrapper 会把它报告成需要重装修正的配置漂移
 - `stateDir`、`configPath`、`tempDir` 这类身份相关路径，在安装时按计划服务账户解析，在状态/诊断阶段按服务实际 `StartName` 对应的账户解析
-- 运行时，`run-gateway.ps1` 使用当前服务进程身份；wrapper 不会尝试模拟“当前交互用户会话”
+- 运行时，`run-gateway.ps1` 使用当前服务进程身份，并且不再改写用户 profile 相关环境变量去模拟另一个账户
 
 ## 故障恢复
 

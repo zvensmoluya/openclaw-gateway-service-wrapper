@@ -3,6 +3,7 @@ logs/
 dist/
 tools/
 .runtime/
+quarantine/
 *.log
 *.tmp
 testResults.xml

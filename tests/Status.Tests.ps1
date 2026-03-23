@@ -350,8 +350,8 @@ Describe 'status.ps1' {
     }
   }
 
-  It 'accepts a LocalSystem service when configured for localSystem' {
-    $configPath = New-StatusTestConfig -Overrides @{ serviceAccountMode = 'localSystem' }
+  It 'reports a built-in account mismatch for current-user service installs' {
+    $configPath = New-StatusTestConfig
     $script:testPaths += $configPath
 
     $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
@@ -378,11 +378,11 @@ Describe 'status.ps1' {
     Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
     Mock Get-ServiceIdentityReport {
       @{
-        configuredMode   = 'localSystem'
+        configuredMode   = 'credential'
         deprecatedAlias  = $false
-        expectedStartName = 'LocalSystem'
+        expectedStartName = 'CONTOSO\svc-openclaw'
         actualStartName  = 'LocalSystem'
-        matches          = $true
+        matches          = $false
         installLayout    = 'generated'
       }
     }
@@ -408,14 +408,14 @@ Describe 'status.ps1' {
       }
     }
     Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
-    Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:statusScript -ConfigPath $configPath -Json
-    $LASTEXITCODE | Should -Be 0
+    $LASTEXITCODE | Should -Be 1
     $report = $output | ConvertFrom-Json
 
     @($report.warnings).Count | Should -Be 0
-    @($report.issues).Count | Should -Be 0
+    @($report.issues) | Should -Contain "Service '$($config.serviceName)' is running as built-in account 'LocalSystem' but the configured model expects user account 'CONTOSO\svc-openclaw'. Reinstall with explicit credentials."
   }
 
   It 'reports a missing restart task for an installed service' {

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-03-23
+
+- Simplified the Windows Service wrapper to a single-user install model tied to the current signed-in Windows account.
+- Removed `localSystem` support from wrapper configuration and validation to avoid mismatched service identity, user profile paths, and tray behavior.
+- Stopped rewriting user profile environment variables in `run-gateway.ps1` so OpenClaw now runs under the service account's real Windows profile.
+- Passed the explicit wrapper `ConfigPath` through tray startup registration to keep the tray controller aligned with non-default installs.
+- Added a brief post-install health-check retry loop to reduce false warnings while OpenClaw is still starting.
+- Updated English and Chinese documentation to reflect the current single-user service model and operational guidance.
+- Expanded test coverage for tray shortcut wiring, gateway environment handling, single-user identity validation, and post-install health-check retries.
+
 - Repository bootstrap for the open-source `openclaw-gateway-service-wrapper` project.
 - Added a generated WinSW configuration pipeline, public lifecycle scripts, diagnostics, and release packaging.
 - Added bilingual documentation, CI workflows, and Pester coverage.

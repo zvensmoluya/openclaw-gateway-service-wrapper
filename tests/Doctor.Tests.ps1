@@ -382,11 +382,11 @@ Describe 'doctor.ps1' {
     }
   }
 
-  It 'accepts a LocalSystem service when configured for localSystem' {
+  It 'reports a built-in account mismatch for current-user service installs' {
     $stateDir = Join-Path $env:TEMP "doctor-state-$([guid]::NewGuid())"
     $gatewayDir = Join-Path $env:TEMP "doctor-gateway-$([guid]::NewGuid())"
     $gatewayConfigPath = Join-Path $gatewayDir 'openclaw.json'
-    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir -Overrides @{ serviceAccountMode = 'localSystem' }
+    $configPath = New-DoctorTestConfig -GatewayConfigPath $gatewayConfigPath -StateDir $stateDir
     $script:testPaths += @($stateDir, $gatewayDir, $gatewayConfigPath, $configPath)
 
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -416,11 +416,11 @@ Describe 'doctor.ps1' {
     Mock Get-PortListeners { @() }
     Mock Get-ServiceIdentityReport {
       @{
-        configuredMode   = 'localSystem'
+        configuredMode   = 'credential'
         deprecatedAlias  = $false
-        expectedStartName = 'LocalSystem'
+        expectedStartName = 'CONTOSO\svc-openclaw'
         actualStartName  = 'LocalSystem'
-        matches          = $true
+        matches          = $false
         installLayout    = 'generated'
       }
     }
@@ -446,14 +446,14 @@ Describe 'doctor.ps1' {
       }
     }
     Mock Get-ServiceControlTaskStatuses { New-MatchingControlTasks -Config $config }
-    Mock Resolve-InspectionIdentityContext { Get-ServiceAccountIdentityContext -AccountName 'LocalSystem' }
+    Mock Resolve-InspectionIdentityContext { Get-ServiceIdentityContext -Mode 'currentUser' }
 
     $output = & $script:doctorScript -ConfigPath $configPath -Json
-    $LASTEXITCODE | Should -Be 0
+    $LASTEXITCODE | Should -Be 1
     $report = $output | ConvertFrom-Json
 
     @($report.warnings).Count | Should -Be 0
-    @($report.issues).Count | Should -Be 0
+    @($report.issues) | Should -Contain "Service '$($config.serviceName)' is running as built-in account 'LocalSystem' but the configured model expects user account 'CONTOSO\svc-openclaw'. Reinstall with explicit credentials."
   }
 
   It 'reports a missing restart task for an installed service' {

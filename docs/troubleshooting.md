@@ -22,8 +22,8 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 
 - `LocalSystem`, `LocalService`, and `NetworkService` are built-in Windows service accounts. They are not interchangeable with your interactive user profile.
 - `legacyRoot` means the installed service still points at the old root-level `OpenClawService.exe` / `.xml` layout, which may lack an explicit `<serviceaccount>` block.
-- Reinstall the service with an explicit credential-backed config. Do not use `git safe.directory` or similar Git workarounds to mask the symptom.
-- If you used `serviceAccountMode: currentUser`, treat it as a compatibility alias only. The service still needs a real Windows account credential and still runs as a Windows Service.
+- Reinstall the service while signed in as the intended Windows user and provide that same user's credential. Do not use `git safe.directory` or similar Git workarounds to mask the symptom.
+- If you used `serviceAccountMode: currentUser`, treat it as a compatibility alias only. The service still needs the current Windows user's real credential and still runs as a Windows Service.
 
 ## `doctor.ps1` Reports Missing `openclaw`
 
@@ -68,6 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 
 ## Credential Install Problems
 
-- Make sure the supplied account already exists on the machine.
-- Confirm the account can log on as a service.
+- Make sure you are signed in as the Windows user that should own the service.
+- If you pass `-Credential`, keep the username on that same current Windows user.
+- Confirm that user can log on as a service.
 - Check that resolved paths under that profile are valid.

@@ -8,7 +8,7 @@
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-由于默认的 `serviceAccountMode` 现在是 `credential`，安装时会提示输入真正要运行服务的 Windows 账户。
+由于默认的 `serviceAccountMode` 现在是 `credential`，而 wrapper 也已经收紧成单用户模型，所以安装时会提示输入当前登录 Windows 用户自己的密码。
 
 使用显式 wrapper 配置安装：
 
@@ -29,11 +29,15 @@ $credential = Get-Credential
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 ```
 
-如果你刻意使用已弃用的 `currentUser` 别名，`install.ps1` 会提示输入当前 Windows 用户的密码，并把服务安装到同一个账户下。
+如果你刻意使用已弃用的 `currentUser` 别名，`install.ps1` 仍然会提示输入当前 Windows 用户的密码，并把服务安装到同一个账户下。
+
+`serviceAccountMode: localSystem` 已不再支持。正确做法是直接用目标 Windows 用户本人来安装服务，而不是把内建服务账户和这个用户的 profile 路径混在一起。
 
 安装成功后，wrapper 会把实际使用的 wrapper 配置路径记到 `.runtime/active-config.json`。
 
 默认情况下，安装还会在当前 Windows 用户的 Startup 文件夹里创建 `tray-controller.ps1` 的启动快捷方式。Windows Service 和托盘控制器是两层不同的东西：前者是机器级后台服务，后者是登录会话里的控制入口。
+
+安装成功后，wrapper 还会注册一个按需触发的计划任务 `\OpenClaw\<serviceName>-Restart`。当 OpenClaw 触发“有意的整进程 Windows 重启”时，wrapper 会通过这个任务把重启动作重新桥接回 WinSW 管理的服务生命周期。
 
 如果目标机器上的服务流量必须走代理，请在安装或重装前先在 wrapper 配置里设置 `httpProxy`、`httpsProxy`、`allProxy` 和/或 `noProxy`。wrapper 会在运行期把这些值导出给 OpenClaw 子进程。
 
@@ -110,4 +114,4 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1
 - 健康检查默认访问 `http://127.0.0.1:<port>/health`
 - 默认停机逻辑只会结束记录下来的服务进程树，不会扫端口误杀其他进程
 - 如果 remembered config 指向的文件已经失效，运维脚本会直接失败，直到你显式传入 `-ConfigPath` 或重新成功安装
-- 如果 `status.ps1` 或 `doctor.ps1` 报告 `LocalSystem` 或 `legacyRoot`，应当重新按显式凭据重装，而不是用 Git 的安全目录设置去掩盖问题
+- 如果 `status.ps1` 或 `doctor.ps1` 报告 `LocalSystem` 或 `legacyRoot`，应当在目标 Windows 用户登录的情况下重新安装，而不是用 Git 的安全目录设置去掩盖问题

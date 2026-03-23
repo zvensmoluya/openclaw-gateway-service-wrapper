@@ -24,7 +24,7 @@ Describe 'install.ps1 control-task flow' {
         serviceName        = $serviceName
         displayName        = $serviceName
         description        = "Install test for $serviceName"
-        serviceAccountMode = 'localSystem'
+        serviceAccountMode = 'credential'
         port               = 19120
         stateDir           = (Join-Path $env:TEMP "$serviceName-state")
         configPath         = (Join-Path $env:TEMP "$serviceName-openclaw.json")
@@ -78,11 +78,11 @@ Describe 'install.ps1 control-task flow' {
 
     Mock Resolve-ServiceAccountPlan {
       @{
-        configuredMode     = 'localSystem'
-        effectiveMode      = 'localSystem'
+        configuredMode     = 'credential'
+        effectiveMode      = 'credential'
         deprecatedAlias    = $false
-        expectedStartName  = 'LocalSystem'
-        identityContext    = (Get-ServiceAccountIdentityContext -AccountName 'LocalSystem')
+        expectedStartName  = (Get-CurrentWindowsIdentityName)
+        identityContext    = (Get-ServiceIdentityContext -Mode 'currentUser')
         credential         = $null
         requiresCredential = $false
         promptUserName     = $null
@@ -137,11 +137,11 @@ Describe 'install.ps1 control-task flow' {
 
     Mock Resolve-ServiceAccountPlan {
       @{
-        configuredMode     = 'localSystem'
-        effectiveMode      = 'localSystem'
+        configuredMode     = 'credential'
+        effectiveMode      = 'credential'
         deprecatedAlias    = $false
-        expectedStartName  = 'LocalSystem'
-        identityContext    = (Get-ServiceAccountIdentityContext -AccountName 'LocalSystem')
+        expectedStartName  = (Get-CurrentWindowsIdentityName)
+        identityContext    = (Get-ServiceIdentityContext -Mode 'currentUser')
         credential         = $null
         requiresCredential = $false
         promptUserName     = $null
@@ -215,5 +215,80 @@ Describe 'install.ps1 control-task flow' {
     $script:uninstallScriptText | Should -Match '\[switch\]\$Elevated'
     $script:uninstallScriptText | Should -Match 'Test-IsCurrentProcessElevated'
     $script:uninstallScriptText | Should -Match 'Start-Process[\s\S]*-Verb RunAs'
+  }
+
+  It 'retries health checks briefly before warning after install' {
+    $configPath = New-InstallTestConfig
+    $script:testPaths += $configPath
+    $config = Get-ServiceConfig -ConfigPath $configPath -IdentityContext (Get-ServiceIdentityContext -Mode 'currentUser')
+    $global:OpenClawInstallHealthCheckCallCount = 0
+
+    Mock Resolve-ServiceAccountPlan {
+      @{
+        configuredMode     = 'credential'
+        effectiveMode      = 'credential'
+        deprecatedAlias    = $false
+        expectedStartName  = (Get-CurrentWindowsIdentityName)
+        identityContext    = (Get-ServiceIdentityContext -Mode 'currentUser')
+        credential         = $null
+        requiresCredential = $false
+        promptUserName     = $null
+      }
+    }
+    Mock Resolve-OpenClawCommandPath { 'powershell.exe' }
+    Mock Get-ServiceDetails {
+      @{
+        installed = $false
+        name      = $config.serviceName
+        status    = 'Running'
+        startType = 'Automatic'
+        processId = 1
+        startName = (Get-CurrentWindowsIdentityName)
+        pathName  = 'OpenClawService.exe'
+      }
+    }
+    Mock Get-PortListeners { @() }
+    Mock Ensure-WinSWBinary { 'winsw.exe' }
+    Mock Write-WinSWServiceXml { 'winsw.xml' }
+    Mock Invoke-WinSWCommand {}
+    Mock Register-ServiceControlTasks {
+      [ordered]@{
+        start   = '\OpenClaw\Test-Start'
+        stop    = '\OpenClaw\Test-Stop'
+        restart = '\OpenClaw\Test-Restart'
+      }
+    }
+    Mock Wait-ForServiceStatus { $true }
+    Mock Get-ServiceInstallValidationIssues { @() }
+    Mock Write-RememberedServiceConfigSelection { 'remembered.json' }
+    Mock Install-TrayStartupShortcut { 'shortcut.lnk' }
+    Mock Invoke-HealthCheck {
+      if ($global:OpenClawInstallHealthCheckCallCount -lt 2) {
+        $global:OpenClawInstallHealthCheckCallCount++
+        return @{
+          ok         = $false
+          statusCode = $null
+          body       = $null
+          error      = 'starting'
+        }
+      }
+
+      $global:OpenClawInstallHealthCheckCallCount++
+      return @{
+        ok         = $true
+        statusCode = 200
+        body       = '{"ok":true}'
+        error      = $null
+      }
+    }
+
+    try {
+      & $script:installScript -ConfigPath $configPath -SkipTray -Elevated
+    } finally {
+      Remove-Variable -Name OpenClawInstallHealthCheckCallCount -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    $LASTEXITCODE | Should -Be 0
+    Should -Invoke Invoke-HealthCheck -Times 3 -Exactly
   }
 }

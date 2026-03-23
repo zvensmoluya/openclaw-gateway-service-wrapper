@@ -37,9 +37,10 @@ After that first successful install, later operational scripts can omit `-Config
 
 ## Service Account Model
 
-- `credential`: the recommended and default mode. The service is installed under an explicit Windows account.
-- `currentUser`: a deprecated compatibility alias. It means "install under the current Windows user's account after prompting for that user's password."
-- Windows Service identity is always the service logon account. This wrapper does not support a mode that automatically follows the current interactive user session.
+- `credential`: the supported and default mode. The service is installed under the same Windows account that is currently signed in and running `install.ps1`.
+- `currentUser`: a deprecated compatibility alias. It resolves to the same single-user install flow as `credential`.
+- `localSystem` is no longer supported.
+- Windows Service identity is always the service logon account. This wrapper no longer supports mixing a built-in service identity with another user's profile paths.
 
 ## Core Fields
 
@@ -106,7 +107,7 @@ Tray rules:
 - Service account mode: `credential`
 - Force bind: `false`
 
-`credential` means the installer resolves identity-aware paths against the selected Windows service account and prompts for credentials during installation when needed.
+`credential` means the installer resolves identity-aware paths against the currently signed-in Windows user and prompts for that same user's password during installation when needed.
 
 `currentUser` is a deprecated compatibility alias. It still prompts for the current Windows user's password and installs the service under that same user account, but it should not be interpreted as a separate runtime model.
 

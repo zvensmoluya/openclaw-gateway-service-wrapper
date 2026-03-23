@@ -22,8 +22,8 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 
 - `LocalSystem`、`LocalService`、`NetworkService` 都是 Windows 内建服务账户，它们和你的交互用户 profile 不是一回事
 - `legacyRoot` 表示当前安装仍然指向根目录旧版 `OpenClawService.exe` / `OpenClawService.xml` 布局，这类安装很可能没有显式 `<serviceaccount>`
-- 正确修法是按显式凭据重装服务，不要用 `git safe.directory` 之类的 Git 规避方式掩盖症状
-- 如果你用的是 `serviceAccountMode: currentUser`，也要把它理解成“安装期兼容别名”，底层仍然是一个需要真实 Windows 账户凭据的 Service
+- 正确修法是由目标 Windows 用户本人登录后重新安装服务，不要用 `git safe.directory` 之类的 Git 规避方式掩盖症状
+- 如果你用的是 `serviceAccountMode: currentUser`，也要把它理解成“安装期兼容别名”，底层仍然是一个需要当前 Windows 用户真实凭据的 Service
 
 ## `doctor.ps1` 报找不到 `openclaw`
 
@@ -61,6 +61,7 @@ powershell -ExecutionPolicy Bypass -File .\doctor.ps1 -ConfigPath .\service-conf
 
 ## 凭据安装问题
 
-- 确保提供的账号已经存在
+- 确保你当前就是目标 Windows 用户本人
+- 如果显式传了 `-Credential`，用户名必须和当前 Windows 用户一致
 - 确认该账号具备“作为服务登录”的权限
 - 检查解析到该账号 profile 下的路径是否有效

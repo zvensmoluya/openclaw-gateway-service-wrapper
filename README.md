@@ -29,7 +29,7 @@ Install with an explicit wrapper config:
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -ConfigPath .\service-config.local.json
 ```
 
-The repository default now uses `serviceAccountMode: credential`, so installation prompts for the Windows account that should own the service. This wrapper is a Windows Service package, not a "follow the currently logged-in user" agent. If you cannot or do not want to use a password-backed Windows user account for the service, use `serviceAccountMode: localSystem` with explicit absolute paths to the desired OpenClaw files.
+The repository default uses `serviceAccountMode: credential`, and this wrapper now supports a single-user Windows Service model only. Install the wrapper while signed in as the Windows user who should own the service, then enter that same user's password when prompted.
 
 By default, `install.ps1` also registers a per-user Startup shortcut for `tray-controller.ps1`. The service still starts with Windows as a background service, while the tray controller appears only after that user signs in. Use `-SkipTray` if you want the service without the tray companion.
 
@@ -69,19 +69,18 @@ After a successful install, the wrapper remembers the wrapper config path in `.r
 
 ## Example Wrapper Configs
 
-- `service-config.local.example.json`: current-user compatibility alias for local installs; still installs a credential-backed Windows Service
-- `service-config.credential.example.json`: service-account install with machine-level paths
-- `service-config.local-system.example.json`: LocalSystem install example for machines where the user account does not have a service-usable password
+- `service-config.local.example.json`: local install example that keeps state under the current Windows user
+- `service-config.credential.example.json`: explicit-path install example for the current Windows user
 - `service-config.proxy.example.json`: proxy overlay example for service environments that cannot reach upstream endpoints directly
 - `service-config.custom-port.example.json`: alternate service name and port
 
 ## Service Account Support
 
 - Default mode is `credential`.
-- `credential` is the recommended Windows Service mode. It installs the service under an explicit Windows account and prompts for credentials when they are not supplied on the command line.
-- `currentUser` is still accepted as a deprecated compatibility alias. It means "prompt for the current Windows user's credential and install the service under that account." It does not mean "run inside the current interactive user session."
-- `localSystem` installs the service as the built-in `LocalSystem` account without prompting for credentials. It must not be combined with `-Credential`. When you want that service to use files from a regular user profile, set `stateDir`, `configPath`, `tempDir`, and `openclawCommand` to absolute user-owned paths.
-- To install under another account, pass a credential at install time:
+- `credential` is the supported Windows Service mode. It installs the service under the same Windows account that is currently signed in and running `install.ps1`.
+- `currentUser` is still accepted as a deprecated compatibility alias. It resolves to the same single-user install model as `credential`.
+- `localSystem` is no longer supported because it led to mismatched runtime identity, user profile, and tray behavior.
+- When you pass `-Credential`, the credential must match the currently signed-in Windows user:
 
 ```powershell
 $credential = Get-Credential
@@ -124,4 +123,5 @@ powershell -ExecutionPolicy Bypass -File .\build-release.ps1 -Version 0.1.0
 - Third-party WinSW binaries are downloaded during install and verified by SHA256.
 - The current implementation prefers precise process-tree shutdown over port-based kill logic.
 - `status.ps1` and `doctor.ps1` report `configSource`, `sourcePath`, `rememberedPath`, service identity details, and a redacted proxy summary so operators can see which wrapper config, Windows account, and wrapper-supplied proxy inputs are actually active.
+- `run-gateway.ps1` now relies on the service's real Windows user profile instead of rewriting user environment variables at launch time.
 - `channels.telegram.proxy` stays upstream OpenClaw config and remains module-specific. Wrapper proxy fields are service-wide environment inputs for OpenClaw and its child processes.
