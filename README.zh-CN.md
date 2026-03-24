@@ -97,12 +97,20 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 
 ## 文档入口
 
+当前稳定方案：
+
 - [架构文档](./docs/architecture.zh-CN.md)
 - [配置参考](./docs/configuration.zh-CN.md)
 - [运维说明](./docs/operations.zh-CN.md)
 - [升级与卸载](./docs/upgrade-and-uninstall.zh-CN.md)
 - [故障排查](./docs/troubleshooting.zh-CN.md)
+
+下一阶段设计：
+
 - [V2 需求与边界基线](./docs/v2-requirements.zh-CN.md)
+- [ADR：V2 默认宿主转向当前用户级后台 Agent](./docs/adr-v2-user-agent.zh-CN.md)
+- [V2 架构蓝图](./docs/v2-architecture.zh-CN.md)
+- [V2 迁移计划](./docs/v2-migration.zh-CN.md)
 
 ## 开发
 

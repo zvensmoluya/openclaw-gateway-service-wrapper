@@ -97,12 +97,20 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 
 ## Documentation
 
+Current stable path:
+
 - [Architecture](./docs/architecture.md)
 - [Configuration Reference](./docs/configuration.md)
 - [Operations Guide](./docs/operations.md)
 - [Upgrade and Uninstall](./docs/upgrade-and-uninstall.md)
 - [Troubleshooting](./docs/troubleshooting.md)
+
+Next-stage design:
+
 - [V2 Requirements Baseline](./docs/v2-requirements.md)
+- [ADR: V2 Default Host Moves To A User-Level Background Agent](./docs/adr-v2-user-agent.md)
+- [V2 Architecture Blueprint](./docs/v2-architecture.md)
+- [V2 Migration Plan](./docs/v2-migration.md)
 
 ## Development
 
