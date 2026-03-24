@@ -102,6 +102,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 - [运维说明](./docs/operations.zh-CN.md)
 - [升级与卸载](./docs/upgrade-and-uninstall.zh-CN.md)
 - [故障排查](./docs/troubleshooting.zh-CN.md)
+- [V2 需求与边界基线](./docs/v2-requirements.zh-CN.md)
 
 ## 开发
 

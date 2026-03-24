@@ -102,6 +102,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 - [Operations Guide](./docs/operations.md)
 - [Upgrade and Uninstall](./docs/upgrade-and-uninstall.md)
 - [Troubleshooting](./docs/troubleshooting.md)
+- [V2 Requirements Baseline](./docs/v2-requirements.md)
 
 ## Development
 
