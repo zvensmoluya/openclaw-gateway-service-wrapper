@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{61AD267E-76A8-4E49-8C3D-2E44B5CF6B6F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenClaw.Agent.Protocol", "src\OpenClaw.Agent.Protocol\OpenClaw.Agent.Protocol.csproj", "{E75300A4-695D-473A-B633-FB951E60645A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenClaw.Agent.Core", "src\OpenClaw.Agent.Core\OpenClaw.Agent.Core.csproj", "{4443C7D2-6E98-4F36-B63F-3145F00DF815}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenClaw.Agent.Cli", "src\OpenClaw.Agent.Cli\OpenClaw.Agent.Cli.csproj", "{AD17730F-7F4B-4B2B-B629-BAAE38EC3247}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenClaw.Agent.Host", "src\OpenClaw.Agent.Host\OpenClaw.Agent.Host.csproj", "{22C2C6DE-FCF7-41D9-95C7-9580FE156159}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{D2545336-E1B7-4ACC-8565-8FE6B3BC5509}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenClaw.Agent.Tests", "tests\OpenClaw.Agent.Tests\OpenClaw.Agent.Tests.csproj", "{D06D55CF-7DDB-4793-90DD-EB83669D6752}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenClaw.Agent.FakeOpenClaw", "tests\OpenClaw.Agent.FakeOpenClaw\OpenClaw.Agent.FakeOpenClaw.csproj", "{A8F0F0C4-5B53-4996-BE52-C18AF632F90D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E75300A4-695D-473A-B633-FB951E60645A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E75300A4-695D-473A-B633-FB951E60645A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E75300A4-695D-473A-B633-FB951E60645A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E75300A4-695D-473A-B633-FB951E60645A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4443C7D2-6E98-4F36-B63F-3145F00DF815}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4443C7D2-6E98-4F36-B63F-3145F00DF815}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4443C7D2-6E98-4F36-B63F-3145F00DF815}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4443C7D2-6E98-4F36-B63F-3145F00DF815}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AD17730F-7F4B-4B2B-B629-BAAE38EC3247}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AD17730F-7F4B-4B2B-B629-BAAE38EC3247}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AD17730F-7F4B-4B2B-B629-BAAE38EC3247}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AD17730F-7F4B-4B2B-B629-BAAE38EC3247}.Release|Any CPU.Build.0 = Release|Any CPU
+		{22C2C6DE-FCF7-41D9-95C7-9580FE156159}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{22C2C6DE-FCF7-41D9-95C7-9580FE156159}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{22C2C6DE-FCF7-41D9-95C7-9580FE156159}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{22C2C6DE-FCF7-41D9-95C7-9580FE156159}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D06D55CF-7DDB-4793-90DD-EB83669D6752}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D06D55CF-7DDB-4793-90DD-EB83669D6752}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D06D55CF-7DDB-4793-90DD-EB83669D6752}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D06D55CF-7DDB-4793-90DD-EB83669D6752}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A8F0F0C4-5B53-4996-BE52-C18AF632F90D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A8F0F0C4-5B53-4996-BE52-C18AF632F90D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A8F0F0C4-5B53-4996-BE52-C18AF632F90D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A8F0F0C4-5B53-4996-BE52-C18AF632F90D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E75300A4-695D-473A-B633-FB951E60645A} = {61AD267E-76A8-4E49-8C3D-2E44B5CF6B6F}
+		{4443C7D2-6E98-4F36-B63F-3145F00DF815} = {61AD267E-76A8-4E49-8C3D-2E44B5CF6B6F}
+		{AD17730F-7F4B-4B2B-B629-BAAE38EC3247} = {61AD267E-76A8-4E49-8C3D-2E44B5CF6B6F}
+		{22C2C6DE-FCF7-41D9-95C7-9580FE156159} = {61AD267E-76A8-4E49-8C3D-2E44B5CF6B6F}
+		{D06D55CF-7DDB-4793-90DD-EB83669D6752} = {D2545336-E1B7-4ACC-8565-8FE6B3BC5509}
+		{A8F0F0C4-5B53-4996-BE52-C18AF632F90D} = {D2545336-E1B7-4ACC-8565-8FE6B3BC5509}
+	EndGlobalSection
+EndGlobal

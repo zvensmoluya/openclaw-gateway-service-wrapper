@@ -1,0 +1,18 @@
+{
+  "openclaw": {
+    "executable": "openclaw.cmd",
+    "arguments": [],
+    "workingDirectory": null,
+    "configPath": "%USERPROFILE%\\.openclaw\\openclaw.json"
+  },
+  "network": {
+    "bind": "loopback",
+    "port": 18789
+  },
+  "proxy": {
+    "httpProxy": null,
+    "httpsProxy": null,
+    "allProxy": null,
+    "noProxy": null
+  }
+}

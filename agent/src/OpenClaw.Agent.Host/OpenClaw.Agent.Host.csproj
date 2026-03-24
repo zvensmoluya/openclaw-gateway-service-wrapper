@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\OpenClaw.Agent.Core\OpenClaw.Agent.Core.csproj" />
+    <ProjectReference Include="..\OpenClaw.Agent.Protocol\OpenClaw.Agent.Protocol.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+</Project>

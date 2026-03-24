@@ -25,3 +25,6 @@ service-config.local.json
 Thumbs.db
 .vscode/
 .idea/
+.vs/
+**/bin/
+**/obj/

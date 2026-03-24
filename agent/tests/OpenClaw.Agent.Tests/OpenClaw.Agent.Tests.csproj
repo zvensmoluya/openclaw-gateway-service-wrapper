@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OpenClaw.Agent.Core\OpenClaw.Agent.Core.csproj" />
+    <ProjectReference Include="..\..\src\OpenClaw.Agent.Protocol\OpenClaw.Agent.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\OpenClaw.Agent.Cli\OpenClaw.Agent.Cli.csproj" />
+    <ProjectReference Include="..\..\src\OpenClaw.Agent.Host\OpenClaw.Agent.Host.csproj" />
+    <ProjectReference Include="..\OpenClaw.Agent.FakeOpenClaw\OpenClaw.Agent.FakeOpenClaw.csproj" />
+  </ItemGroup>
+</Project>
