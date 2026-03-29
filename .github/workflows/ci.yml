@@ -79,6 +79,8 @@ jobs:
           $required = @(
             '.\dist\v2\win-x64\current\OpenClaw.Agent.Host.exe',
             '.\dist\v2\win-x64\current\OpenClaw.Agent.Cli.exe',
+            '.\dist\v2\win-x64\current\OpenClaw.Agent.Tray.exe',
+            '.\dist\v2\win-x64\current\assets\tray\openclaw.ico',
             '.\dist\v2\win-x64\current\config\agent.json.example',
             '.\dist\v2\win-x64\current\README.md'
           )

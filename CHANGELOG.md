@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-03-29
+
+- Promoted the V2 current-user `.NET 8 / C#` agent path to the default recommended runtime on Windows.
+- Added the V2 tray application with packaged tray icon assets, state-aware icon selection, bundled notifications, and a basic status window for common actions.
+- Added `install-v2.ps1`, `uninstall-v2.ps1`, and `cleanup-v2-legacy.ps1` for user-level install, removal, and legacy Service cleanup.
+- Added wrapper-config migration through `OpenClaw.Agent.Cli init-config --from-wrapper ...`.
+- Changed V2 launch handling so `openclaw.cmd` shims can resolve to `node.exe + openclaw.mjs`, matching the old service launch behavior more closely.
+- Scoped V2 pipe and mutex names by data root so test and runtime installations no longer collide in the same Windows session.
+- Extended V2 build and release packaging to ship tray icon assets and the published `dist\v2` layout.
+- Expanded automated coverage for tray UI helpers, install layout assets, legacy cleanup, and V2 integration behavior.
+
 ## 0.2.0 - 2026-03-23
 
 - Simplified the Windows Service wrapper to a single-user install model tied to the current signed-in Windows account.

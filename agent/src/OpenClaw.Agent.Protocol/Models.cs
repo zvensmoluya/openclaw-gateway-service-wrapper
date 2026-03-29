@@ -86,3 +86,14 @@ public sealed class ExitPayload
     public int? ExitCode { get; set; }
     public string? ChildStoppedAt { get; set; }
 }
+
+public sealed class InitConfigPayload
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string SourcePath { get; set; } = string.Empty;
+    public string OutputPath { get; set; } = string.Empty;
+    public List<string> RetainedFields { get; set; } = [];
+    public List<string> RetiredFields { get; set; } = [];
+    public List<string> Warnings { get; set; } = [];
+}

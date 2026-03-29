@@ -12,13 +12,13 @@ internal static class Program
     {
         var launchSource = args.Contains("--autostart", StringComparer.OrdinalIgnoreCase) ? "autostart" : "manual";
         var session = PathHelpers.GetCurrentSession();
-        using var mutex = new Mutex(initiallyOwned: true, NamedPipeNames.GetMutexName(session), out var createdNew);
+        var paths = PathHelpers.GetDefaultPaths();
+        using var mutex = new Mutex(initiallyOwned: true, NamedPipeNames.GetMutexName(session, paths.DataRoot), out var createdNew);
         if (!createdNew)
         {
             return 0;
         }
 
-        var paths = PathHelpers.GetDefaultPaths();
         PathHelpers.EnsureDataDirectories(paths);
         var bootstrapLogWriter = new AgentLogWriter(paths.AgentLogPath);
 
@@ -26,7 +26,7 @@ internal static class Program
             ?? throw new InvalidOperationException("Unable to determine the host executable path."));
         var runtime = new AgentRuntime(paths, session, hostExecutablePath, logWriter: bootstrapLogWriter);
         using var shutdownCts = new CancellationTokenSource();
-        var pipeServer = new AgentPipeServer(session, (command, token) => HandleCommandAsync(runtime, command, token));
+        var pipeServer = new AgentPipeServer(session, paths.DataRoot, (command, token) => HandleCommandAsync(runtime, command, token));
         var pipeTask = Task.Run(
             async () =>
             {

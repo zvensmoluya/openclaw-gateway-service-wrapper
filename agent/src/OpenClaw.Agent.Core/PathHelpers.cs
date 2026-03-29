@@ -31,6 +31,19 @@ public static class PathHelpers
         };
     }
 
+    public static string GetInstallRoot()
+    {
+        var overrideRoot = Environment.GetEnvironmentVariable(AgentConstants.InstallRootOverrideEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(overrideRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenClaw", "app")
+            : Path.GetFullPath(overrideRoot);
+    }
+
+    public static string GetCurrentInstallDirectory()
+    {
+        return Path.Combine(GetInstallRoot(), "current");
+    }
+
     public static CurrentSessionContext GetCurrentSession()
     {
         using var identity = WindowsIdentity.GetCurrent();
@@ -62,13 +75,33 @@ public static class PathHelpers
 
     public static bool IsStablePublishDirectory(string baseDirectory)
     {
+        return HasPathTail(baseDirectory, AgentConstants.StablePublishTail);
+    }
+
+    public static bool IsInstalledLayoutDirectory(string baseDirectory)
+    {
+        var expected = GetCurrentInstallDirectory()
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var actual = Path.GetFullPath(baseDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
+            || HasPathTail(baseDirectory, AgentConstants.InstalledLayoutTail);
+    }
+
+    public static bool IsSupportedLaunchDirectory(string baseDirectory)
+    {
+        return IsStablePublishDirectory(baseDirectory) || IsInstalledLayoutDirectory(baseDirectory);
+    }
+
+    private static bool HasPathTail(string baseDirectory, IReadOnlyList<string> tail)
+    {
         var fullPath = Path.GetFullPath(baseDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
         var current = new DirectoryInfo(fullPath);
-        for (var index = AgentConstants.StablePublishTail.Length - 1; index >= 0; index--)
+        for (var index = tail.Count - 1; index >= 0; index--)
         {
-            if (current is null || !string.Equals(current.Name, AgentConstants.StablePublishTail[index], StringComparison.OrdinalIgnoreCase))
+            if (current is null || !string.Equals(current.Name, tail[index], StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }

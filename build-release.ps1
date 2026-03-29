@@ -32,14 +32,17 @@ try {
 
   $rootFiles = @(
     'CHANGELOG.md',
+    'cleanup-v2-legacy.ps1',
     'control-service-task.ps1',
     'CONTRIBUTING.md',
     'LICENSE',
     'README.md',
     'README.zh-CN.md',
+    'build-v2.ps1',
     'build-release.ps1',
     'doctor.ps1',
     'install.ps1',
+    'install-v2.ps1',
     'invoke-service-action.ps1',
     'invoke-tray-action.ps1',
     'reinstall-service-elevated.ps1',
@@ -59,6 +62,7 @@ try {
     'tray-controller.ps1',
     'tray-controller-launcher.vbs',
     'uninstall.ps1',
+    'uninstall-v2.ps1',
     'uninstall-service-elevated.ps1'
   )
 
@@ -66,8 +70,13 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $stagingRoot $file) -Force
   }
 
-  foreach ($directory in @('assets', 'docs', 'src', 'templates', 'tests')) {
+  foreach ($directory in @('agent', 'assets', 'docs', 'src', 'templates', 'tests')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $directory) -Destination (Join-Path $stagingRoot $directory) -Recurse -Force
+  }
+
+  $v2PublishRoot = Join-Path $PSScriptRoot 'dist\v2'
+  if (Test-Path -LiteralPath $v2PublishRoot) {
+    Copy-Item -LiteralPath $v2PublishRoot -Destination (Join-Path $stagingRoot 'dist\v2') -Recurse -Force
   }
 
   $metadata = @{

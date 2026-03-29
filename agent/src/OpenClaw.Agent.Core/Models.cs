@@ -5,6 +5,7 @@ public sealed class AgentConfig
     public OpenClawLaunchConfig OpenClaw { get; set; } = new();
     public NetworkConfig Network { get; set; } = new();
     public ProxyConfig Proxy { get; set; } = new();
+    public TrayConfig Tray { get; set; } = new();
 }
 
 public sealed class OpenClawLaunchConfig
@@ -27,6 +28,33 @@ public sealed class ProxyConfig
     public string? HttpsProxy { get; set; }
     public string? AllProxy { get; set; }
     public string? NoProxy { get; set; }
+}
+
+public sealed class TrayConfig
+{
+    public string? Title { get; set; } = "OpenClaw";
+    public string Notifications { get; set; } = "all";
+    public TrayRefreshConfig Refresh { get; set; } = new();
+    public TrayIconConfig Icons { get; set; } = new();
+}
+
+public sealed class TrayRefreshConfig
+{
+    public int FastSeconds { get; set; } = 30;
+    public int DeepSeconds { get; set; } = 180;
+    public int MenuSeconds { get; set; } = 10;
+}
+
+public sealed class TrayIconConfig
+{
+    public string? Default { get; set; }
+    public string? Healthy { get; set; }
+    public string? Degraded { get; set; }
+    public string? Unhealthy { get; set; }
+    public string? Stopped { get; set; }
+    public string? Error { get; set; }
+    public string? Loading { get; set; }
+    public string? NotInstalled { get; set; }
 }
 
 public sealed class CurrentSessionContext
@@ -105,4 +133,15 @@ public sealed class AutostartStatus
     public bool PathMatches { get; init; }
     public string? RegistryValue { get; init; }
     public string? ExpectedValue { get; init; }
+}
+
+public sealed class InitConfigResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string SourcePath { get; init; } = string.Empty;
+    public string OutputPath { get; init; } = string.Empty;
+    public List<string> RetainedFields { get; init; } = [];
+    public List<string> RetiredFields { get; init; } = [];
+    public List<string> Warnings { get; init; } = [];
 }

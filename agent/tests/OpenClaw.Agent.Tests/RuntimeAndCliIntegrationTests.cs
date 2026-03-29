@@ -107,6 +107,7 @@ public sealed class RuntimeAndCliIntegrationTests
             var cachedResponse = AgentJson.Deserialize<AgentResponse>(cachedOutput.ToString())!;
             Assert.Equal("cache", cachedResponse.StatusSource);
             Assert.False(cachedResponse.HostReachable);
+            Assert.Equal("Stopped", cachedResponse.State.Current);
         }
         finally
         {

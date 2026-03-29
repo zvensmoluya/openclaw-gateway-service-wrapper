@@ -11,6 +11,7 @@ internal static class TestSupport
     public static string AgentRoot => FindAgentRoot();
     public static string CliExecutablePath => Path.Combine(AgentRoot, "src", "OpenClaw.Agent.Cli", "bin", "Debug", "net8.0-windows", "OpenClaw.Agent.Cli.exe");
     public static string HostExecutablePath => Path.Combine(AgentRoot, "src", "OpenClaw.Agent.Host", "bin", "Debug", "net8.0-windows", "OpenClaw.Agent.Host.exe");
+    public static string TrayExecutablePath => Path.Combine(AgentRoot, "src", "OpenClaw.Agent.Tray", "bin", "Debug", "net8.0-windows", "OpenClaw.Agent.Tray.exe");
     public static string FakeExecutablePath => Path.Combine(AgentRoot, "tests", "OpenClaw.Agent.FakeOpenClaw", "bin", "Debug", "net8.0", "OpenClaw.Agent.FakeOpenClaw.exe");
 
     public static string CreateTempDataRoot()
@@ -35,6 +36,13 @@ internal static class TestSupport
             StdOutLogPath = Path.Combine(dataRoot, "logs", "openclaw.stdout.log"),
             StdErrLogPath = Path.Combine(dataRoot, "logs", "openclaw.stderr.log")
         };
+    }
+
+    public static string CreateTempInstallRoot()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "OpenClaw.Agent.Install.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
     }
 
     public static void WriteAgentConfig(string dataRoot, string executablePath, int port, IReadOnlyList<string>? arguments = null, string? workingDirectory = null)

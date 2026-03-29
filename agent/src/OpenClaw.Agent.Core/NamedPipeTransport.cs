@@ -7,11 +7,13 @@ namespace OpenClaw.Agent.Core;
 public sealed class AgentPipeServer
 {
     private readonly CurrentSessionContext _session;
+    private readonly string _dataRoot;
     private readonly Func<string, CancellationToken, Task<AgentResponse>> _handler;
 
-    public AgentPipeServer(CurrentSessionContext session, Func<string, CancellationToken, Task<AgentResponse>> handler)
+    public AgentPipeServer(CurrentSessionContext session, string dataRoot, Func<string, CancellationToken, Task<AgentResponse>> handler)
     {
         _session = session;
+        _dataRoot = dataRoot;
         _handler = handler;
     }
 
@@ -50,7 +52,7 @@ public sealed class AgentPipeServer
     private NamedPipeServerStream CreateServerStream()
     {
         return new NamedPipeServerStream(
-            NamedPipeNames.GetPipeName(_session),
+            NamedPipeNames.GetPipeName(_session, _dataRoot),
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
@@ -63,15 +65,17 @@ public sealed class AgentPipeServer
 public sealed class AgentPipeClient
 {
     private readonly CurrentSessionContext _session;
+    private readonly string _dataRoot;
 
-    public AgentPipeClient(CurrentSessionContext session)
+    public AgentPipeClient(CurrentSessionContext session, string dataRoot)
     {
         _session = session;
+        _dataRoot = dataRoot;
     }
 
     public async Task<AgentResponse?> TrySendAsync(string command, CancellationToken cancellationToken)
     {
-        using var stream = new NamedPipeClientStream(".", NamedPipeNames.GetPipeName(_session), PipeDirection.InOut, PipeOptions.Asynchronous);
+        using var stream = new NamedPipeClientStream(".", NamedPipeNames.GetPipeName(_session, _dataRoot), PipeDirection.InOut, PipeOptions.Asynchronous);
         try
         {
             await stream.ConnectAsync(500, cancellationToken);

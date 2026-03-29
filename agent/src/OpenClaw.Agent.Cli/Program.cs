@@ -38,9 +38,10 @@ public sealed class CliApplication
         var paths = PathHelpers.GetDefaultPaths();
         PathHelpers.EnsureDataDirectories(paths);
         var hostLaunchInfo = HostLocator.ResolveFromCliBaseDirectory(AppContext.BaseDirectory);
-        var pipeClient = new AgentPipeClient(session);
+        var pipeClient = new AgentPipeClient(session, paths.DataRoot);
         var cacheReader = new CacheReportReader();
         var autostartManager = new AutostartManager();
+        var migrator = new WrapperConfigMigrator();
 
         return command switch
         {
@@ -50,6 +51,7 @@ public sealed class CliApplication
             "status" => await RunReadCommandAsync("status", json, pipeClient, cacheReader, session, paths, hostLaunchInfo, cancellationToken),
             "doctor" => await RunReadCommandAsync("doctor", json, pipeClient, cacheReader, session, paths, hostLaunchInfo, cancellationToken),
             "autostart" => await RunAutostartAsync(args.Skip(1).ToArray(), json, autostartManager, hostLaunchInfo, cancellationToken),
+            "init-config" => await RunInitConfigAsync(args.Skip(1).ToArray(), json, migrator, paths, cancellationToken),
             _ => WriteUnknownCommand(command)
         };
     }
@@ -205,6 +207,58 @@ public sealed class CliApplication
         return Task.FromResult(WriteResponse(response, json));
     }
 
+    private Task<int> RunInitConfigAsync(
+        string[] args,
+        bool json,
+        WrapperConfigMigrator migrator,
+        AgentPaths paths,
+        CancellationToken cancellationToken)
+    {
+        var wrapperPath = default(string);
+        var force = args.Any(argument => string.Equals(argument, "--force", StringComparison.OrdinalIgnoreCase));
+
+        for (var index = 0; index < args.Length; index++)
+        {
+            if (string.Equals(args[index], "--from-wrapper", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Length)
+            {
+                wrapperPath = args[index + 1];
+                index++;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(wrapperPath))
+        {
+            _error.WriteLine("init-config requires --from-wrapper <path>.");
+            WriteUsage();
+            return Task.FromResult(1);
+        }
+
+        try
+        {
+            var result = migrator.InitializeConfig(wrapperPath, paths.ConfigPath, force);
+            return Task.FromResult(WriteInitConfigResponse(result, json));
+        }
+        catch (Exception ex)
+        {
+            if (json)
+            {
+                _output.WriteLine(AgentJson.Serialize(new InitConfigPayload
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    SourcePath = Path.GetFullPath(wrapperPath),
+                    OutputPath = paths.ConfigPath
+                }));
+            }
+            else
+            {
+                _error.WriteLine(ex.Message);
+            }
+
+            return Task.FromResult(1);
+        }
+    }
+
     private static async Task StartHostAsync(HostLaunchInfo hostLaunchInfo, string source)
     {
         var startInfo = new ProcessStartInfo
@@ -315,6 +369,46 @@ public sealed class CliApplication
         return 1;
     }
 
+    private int WriteInitConfigResponse(InitConfigResult result, bool json)
+    {
+        if (json)
+        {
+            _output.WriteLine(AgentJson.Serialize(new InitConfigPayload
+            {
+                Success = result.Success,
+                Message = result.Message,
+                SourcePath = result.SourcePath,
+                OutputPath = result.OutputPath,
+                RetainedFields = result.RetainedFields,
+                RetiredFields = result.RetiredFields,
+                Warnings = result.Warnings
+            }));
+        }
+        else
+        {
+            _output.WriteLine($"Success      : {result.Success}");
+            _output.WriteLine($"Message      : {result.Message}");
+            _output.WriteLine($"SourcePath   : {result.SourcePath}");
+            _output.WriteLine($"OutputPath   : {result.OutputPath}");
+            if (result.RetainedFields.Count > 0)
+            {
+                _output.WriteLine($"Retained     : {string.Join(", ", result.RetainedFields)}");
+            }
+
+            if (result.RetiredFields.Count > 0)
+            {
+                _output.WriteLine($"Retired      : {string.Join(", ", result.RetiredFields)}");
+            }
+
+            if (result.Warnings.Count > 0)
+            {
+                _output.WriteLine($"Warnings     : {string.Join(" | ", result.Warnings)}");
+            }
+        }
+
+        return result.Success ? 0 : 1;
+    }
+
     private void WriteUsage()
     {
         _output.WriteLine("Usage:");
@@ -324,5 +418,6 @@ public sealed class CliApplication
         _output.WriteLine("  OpenClaw.Agent.Cli status [--json]");
         _output.WriteLine("  OpenClaw.Agent.Cli doctor [--json]");
         _output.WriteLine("  OpenClaw.Agent.Cli autostart enable|disable|status [--json]");
+        _output.WriteLine("  OpenClaw.Agent.Cli init-config --from-wrapper <path> [--force] [--json]");
     }
 }

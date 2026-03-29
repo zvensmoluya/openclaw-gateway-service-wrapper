@@ -14,5 +14,24 @@
     "httpsProxy": null,
     "allProxy": null,
     "noProxy": null
+  },
+  "tray": {
+    "title": "OpenClaw",
+    "notifications": "all",
+    "refresh": {
+      "fastSeconds": 30,
+      "deepSeconds": 180,
+      "menuSeconds": 10
+    },
+    "icons": {
+      "default": null,
+      "healthy": null,
+      "degraded": null,
+      "unhealthy": null,
+      "stopped": null,
+      "error": null,
+      "loading": null,
+      "notInstalled": null
+    }
   }
 }

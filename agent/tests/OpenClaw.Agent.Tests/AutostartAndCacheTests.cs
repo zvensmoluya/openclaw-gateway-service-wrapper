@@ -23,6 +23,27 @@ public sealed class AutostartAndCacheTests
     }
 
     [Fact]
+    public void AutostartManager_AcceptsInstalledLayout()
+    {
+        var registry = new FakeRegistryAccessor();
+        var manager = new AutostartManager(registry);
+        var installRoot = TestSupport.CreateTempInstallRoot();
+        var appRoot = Path.Combine(installRoot, "OpenClaw", "app");
+        var currentRoot = Path.Combine(appRoot, "current");
+        Directory.CreateDirectory(currentRoot);
+        var hostPath = Path.Combine(currentRoot, AgentConstants.HostExecutableName);
+        File.WriteAllText(hostPath, string.Empty);
+
+        using var installRootScope = new EnvironmentVariableScope(AgentConstants.InstallRootOverrideEnvironmentVariable, appRoot);
+        var status = manager.Enable(hostPath);
+
+        Assert.True(status.Enabled);
+        Assert.True(status.PathMatches);
+        Assert.NotNull(status.RegistryValue);
+        Directory.Delete(installRoot, recursive: true);
+    }
+
+    [Fact]
     public void CacheReportReader_FlagsCrossSessionConflict()
     {
         var dataRoot = TestSupport.CreateTempDataRoot();

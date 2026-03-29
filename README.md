@@ -1,9 +1,15 @@
 # openclaw-gateway-service-wrapper
 
-`openclaw-gateway-service-wrapper` is a Windows service wrapper for the OpenClaw gateway. It is not the upstream OpenClaw project.
+`openclaw-gateway-service-wrapper` now ships two Windows hosting paths for the OpenClaw gateway:
 
-This repository focuses on the packaging layer only:
+- Default recommended path: the V2 current-user background Agent (`Host + CLI + Tray`)
+- Compatibility fallback: the legacy Windows Service wrapper
 
+It is not the upstream OpenClaw project.
+
+This repository focuses on the packaging and host-control layer only:
+
+- V2 user-level Agent packaging, install/uninstall, tray control, and migration from wrapper config
 - WinSW download, checksum validation, and service definition rendering
 - PowerShell lifecycle scripts for install, start, stop, restart, status, uninstall, and diagnostics
 - Release packaging, documentation, and tests
@@ -12,6 +18,52 @@ This repository focuses on the packaging layer only:
 Chinese documentation is available in [README.zh-CN.md](./README.zh-CN.md).
 
 ## Quick Start
+
+Recommended V2 path:
+
+1. Choose a wrapper config for migration:
+   - Edit `service-config.json` in place, or
+   - Copy `service-config.local.example.json` to `service-config.local.json`
+2. Make sure the wrapper config's `configPath` points to your real OpenClaw `openclaw.json`.
+3. Install the V2 Agent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-v2.ps1
+```
+
+Install with an explicit wrapper config:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-v2.ps1 -WrapperConfigPath .\service-config.local.json
+```
+
+By default, `install-v2.ps1` now:
+
+- copies the published `Host + CLI + Tray` layout under `%LOCALAPPDATA%\OpenClaw\app\current\`
+- starts the V2 host and tray for the current session
+- waits for `status --json` to report `Running` with `health.ok = true`
+- cleans up the old Service path after the V2 install is healthy
+
+4. Use the installed control surfaces:
+
+```powershell
+%LOCALAPPDATA%\OpenClaw\app\current\OpenClaw.Agent.Cli.exe status --json
+%LOCALAPPDATA%\OpenClaw\app\current\OpenClaw.Agent.Cli.exe doctor --json
+```
+
+5. Remove the V2 Agent when needed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall-v2.ps1 -Purge
+```
+
+If you already switched to V2 and only want to remove historical Service leftovers:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\cleanup-v2-legacy.ps1
+```
+
+## Historical Service Path
 
 1. Choose a wrapper config:
    - Edit `service-config.json` in place, or
@@ -97,20 +149,20 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Credential $credential
 
 ## Documentation
 
-Current stable path:
+Default recommended path:
+
+- [V2 Requirements Baseline](./docs/v2-requirements.md)
+- [ADR: V2 Default Host Moves To A User-Level Background Agent](./docs/adr-v2-user-agent.md)
+- [V2 Architecture Blueprint](./docs/v2-architecture.md)
+- [V2 Migration Plan](./docs/v2-migration.md)
+
+Historical Service docs:
 
 - [Architecture](./docs/architecture.md)
 - [Configuration Reference](./docs/configuration.md)
 - [Operations Guide](./docs/operations.md)
 - [Upgrade and Uninstall](./docs/upgrade-and-uninstall.md)
 - [Troubleshooting](./docs/troubleshooting.md)
-
-Next-stage design:
-
-- [V2 Requirements Baseline](./docs/v2-requirements.md)
-- [ADR: V2 Default Host Moves To A User-Level Background Agent](./docs/adr-v2-user-agent.md)
-- [V2 Architecture Blueprint](./docs/v2-architecture.md)
-- [V2 Migration Plan](./docs/v2-migration.md)
 
 ## Development
 

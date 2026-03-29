@@ -6,9 +6,10 @@ public sealed class OpenClawCommandResolver
     {
         var executable = config.OpenClaw.Executable;
         var resolvedExecutable = ResolveExecutable(executable);
-        var kind = IsCmdShim(resolvedExecutable) ? ResolvedCommandKind.CmdShim : ResolvedCommandKind.Executable;
+        var (effectiveExecutable, preArguments, kind) = ResolveLaunchExecutable(resolvedExecutable);
         var workingDirectory = ResolveWorkingDirectory(config, resolvedExecutable);
         var effectiveArguments = new List<string>();
+        effectiveArguments.AddRange(preArguments);
         effectiveArguments.AddRange(config.OpenClaw.Arguments);
         effectiveArguments.AddRange(
         [
@@ -22,7 +23,7 @@ public sealed class OpenClawCommandResolver
 
         return new ResolvedLaunchCommand
         {
-            ResolvedExecutablePath = resolvedExecutable,
+            ResolvedExecutablePath = effectiveExecutable,
             WorkingDirectory = workingDirectory,
             CommandKind = kind,
             EffectiveArguments = effectiveArguments,
@@ -111,6 +112,25 @@ public sealed class OpenClawCommandResolver
         var extension = Path.GetExtension(path);
         return string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase)
             || string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static (string Executable, IReadOnlyList<string> PreArguments, ResolvedCommandKind Kind) ResolveLaunchExecutable(string resolvedExecutable)
+    {
+        if (!IsCmdShim(resolvedExecutable))
+        {
+            return (resolvedExecutable, Array.Empty<string>(), ResolvedCommandKind.Executable);
+        }
+
+        var commandDirectory = Path.GetDirectoryName(resolvedExecutable)
+            ?? throw new InvalidOperationException($"Unable to resolve the parent directory for '{resolvedExecutable}'.");
+        var nodeExecutablePath = Path.Combine(commandDirectory, "node.exe");
+        var entryScriptPath = Path.Combine(commandDirectory, "node_modules", "openclaw", "openclaw.mjs");
+        if (File.Exists(nodeExecutablePath) && File.Exists(entryScriptPath))
+        {
+            return (nodeExecutablePath, [entryScriptPath], ResolvedCommandKind.Executable);
+        }
+
+        return (resolvedExecutable, Array.Empty<string>(), ResolvedCommandKind.CmdShim);
     }
 
     private static string ResolveWorkingDirectory(AgentConfig config, string resolvedExecutable)

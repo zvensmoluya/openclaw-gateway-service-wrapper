@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\OpenClaw.Agent.Protocol\OpenClaw.Agent.Protocol.csproj" />
     <ProjectReference Include="..\..\src\OpenClaw.Agent.Cli\OpenClaw.Agent.Cli.csproj" />
     <ProjectReference Include="..\..\src\OpenClaw.Agent.Host\OpenClaw.Agent.Host.csproj" />
+    <ProjectReference Include="..\..\src\OpenClaw.Agent.Tray\OpenClaw.Agent.Tray.csproj" />
     <ProjectReference Include="..\OpenClaw.Agent.FakeOpenClaw\OpenClaw.Agent.FakeOpenClaw.csproj" />
   </ItemGroup>
 </Project>

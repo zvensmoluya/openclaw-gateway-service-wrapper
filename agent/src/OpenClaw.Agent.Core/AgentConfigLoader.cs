@@ -32,6 +32,11 @@ public sealed class AgentConfigLoader
         config.Proxy.AllProxy = NormalizeOptional(config.Proxy.AllProxy);
         config.Proxy.NoProxy = NormalizeOptional(config.Proxy.NoProxy);
         config.Network.Bind = string.IsNullOrWhiteSpace(config.Network.Bind) ? AgentConstants.DefaultBind : config.Network.Bind.Trim();
+        config.Tray.Title = NormalizeOptional(config.Tray.Title) ?? "OpenClaw";
+        config.Tray.Notifications = NormalizeOptional(config.Tray.Notifications) ?? "all";
+        config.Tray.Refresh.FastSeconds = NormalizeInt(config.Tray.Refresh.FastSeconds, 30);
+        config.Tray.Refresh.DeepSeconds = NormalizeInt(config.Tray.Refresh.DeepSeconds, 180);
+        config.Tray.Refresh.MenuSeconds = NormalizeInt(config.Tray.Refresh.MenuSeconds, 10);
     }
 
     private static void Validate(AgentConfig config, AgentPaths paths)
@@ -60,10 +65,35 @@ public sealed class AgentConfigLoader
         {
             throw new InvalidOperationException("Resolved agent config path must be absolute.");
         }
+
+        if (config.Tray.Notifications is not ("all" or "errorsOnly" or "off"))
+        {
+            throw new InvalidOperationException("tray.notifications must be one of: all, errorsOnly, off.");
+        }
+
+        if (config.Tray.Refresh.FastSeconds < 15 || config.Tray.Refresh.FastSeconds > 300)
+        {
+            throw new InvalidOperationException($"tray.refresh.fastSeconds '{config.Tray.Refresh.FastSeconds}' is outside the valid range 15-300.");
+        }
+
+        if (config.Tray.Refresh.DeepSeconds < 60 || config.Tray.Refresh.DeepSeconds > 900)
+        {
+            throw new InvalidOperationException($"tray.refresh.deepSeconds '{config.Tray.Refresh.DeepSeconds}' is outside the valid range 60-900.");
+        }
+
+        if (config.Tray.Refresh.MenuSeconds < 5 || config.Tray.Refresh.MenuSeconds > 60)
+        {
+            throw new InvalidOperationException($"tray.refresh.menuSeconds '{config.Tray.Refresh.MenuSeconds}' is outside the valid range 5-60.");
+        }
     }
 
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static int NormalizeInt(int value, int fallback)
+    {
+        return value <= 0 ? fallback : value;
     }
 }

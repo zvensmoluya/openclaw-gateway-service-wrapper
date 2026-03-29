@@ -78,10 +78,10 @@ public sealed class AutostartManager
         }
 
         var directory = Path.GetDirectoryName(hostPath) ?? throw new InvalidOperationException($"No parent directory for '{hostPath}'.");
-        if (!PathHelpers.IsStablePublishDirectory(directory))
+        if (!PathHelpers.IsSupportedLaunchDirectory(directory))
         {
             throw new InvalidOperationException(
-                $"Autostart can only be enabled from the stable publish layout ending in '{Path.Combine(AgentConstants.StablePublishTail)}'. Current directory: {directory}");
+                $"Autostart can only be enabled from the stable publish layout '{Path.Combine(AgentConstants.StablePublishTail)}' or the installed layout '{Path.Combine(AgentConstants.InstalledLayoutTail)}'. Current directory: {directory}");
         }
     }
 }
