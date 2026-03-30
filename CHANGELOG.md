@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-03-30
+
+- Fixed V2 tray recovery so it can relaunch the background host when the tray survives but the host process does not.
+- Relaxed tray start/restart enablement so recovery actions remain available when the host is temporarily unreachable.
+- Added `HostBootstrapper` so CLI and tray host-launch behavior stays consistent.
+- Hardened state-file persistence to use atomic replacement writes and tolerant reads for corrupted or zero-filled cache files.
+- Added coverage for corrupted state-file handling and tray-driven host recovery scenarios.
+
 ## 0.3.0 - 2026-03-29
 
 - Promoted the V2 current-user `.NET 8 / C#` agent path to the default recommended runtime on Windows.

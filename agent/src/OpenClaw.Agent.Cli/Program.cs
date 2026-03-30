@@ -87,7 +87,7 @@ public sealed class CliApplication
             return WriteResponse(liveResponse, json);
         }
 
-        await StartHostAsync(hostLaunchInfo, command == "restart" ? "cli-restart" : "cli-start");
+        await HostBootstrapper.StartHostAsync(hostLaunchInfo, command == "restart" ? "cli-restart" : "cli-start");
         var waitDeadline = DateTimeOffset.UtcNow.AddSeconds(10);
         while (DateTimeOffset.UtcNow < waitDeadline)
         {

@@ -113,9 +113,13 @@ internal sealed class TrayStatusForm : Form
 
         var hostReachable = response.HostReachable;
         _openDashboardButton.Enabled = hostReachable;
-        _startButton.Enabled = hostReachable && response.State.Current is not nameof(AgentState.Running) and not nameof(AgentState.Starting);
+        _startButton.Enabled = hostReachable
+            ? response.State.Current is not nameof(AgentState.Running) and not nameof(AgentState.Starting)
+            : response.State.Current is not nameof(AgentState.Stopping);
         _stopButton.Enabled = hostReachable && response.State.Current is not nameof(AgentState.Stopped) and not nameof(AgentState.Stopping);
-        _restartButton.Enabled = hostReachable && response.State.Current is not nameof(AgentState.Starting) and not nameof(AgentState.Stopping);
+        _restartButton.Enabled = hostReachable
+            ? response.State.Current is not nameof(AgentState.Starting) and not nameof(AgentState.Stopping)
+            : response.State.Current is not nameof(AgentState.Stopping);
         _refreshButton.Enabled = true;
         _openLogsButton.Enabled = true;
         _openConfigButton.Enabled = true;

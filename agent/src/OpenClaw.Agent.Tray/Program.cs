@@ -42,6 +42,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly TrayIconResolver _iconResolver;
     private readonly TrayIssueReader _issueReader;
     private readonly TrayShellActions _shellActions;
+    private readonly HostLaunchInfo _hostLaunchInfo;
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _openDashboardItem;
     private readonly ToolStripMenuItem _startItem;
@@ -62,6 +63,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool _refreshInProgress;
     private TrayStatusForm? _statusForm;
     private string? _recentIssue;
+    private DateTimeOffset _lastHostRecoveryAttemptAt = DateTimeOffset.MinValue;
 
     public TrayApplicationContext(CurrentSessionContext session, AgentPaths paths)
     {
@@ -74,6 +76,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _iconResolver = new TrayIconResolver(AppContext.BaseDirectory);
         _issueReader = new TrayIssueReader();
         _shellActions = new TrayShellActions();
+        _hostLaunchInfo = HostLocator.ResolveFromCliBaseDirectory(AppContext.BaseDirectory);
         _expectedHostPath = Path.Combine(PathHelpers.GetCurrentInstallDirectory(), AgentConstants.HostExecutableName);
 
         _menu = new ContextMenuStrip();
@@ -148,6 +151,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var response = await _pipeClient.TrySendAsync(command, CancellationToken.None);
         if (response is null)
         {
+            if (command is "start" or "restart")
+            {
+                var cached = _cacheReportReader.ReadStatus(false, _paths, _expectedHostPath, _session.SessionId);
+                await RecoverHostAsync(cached, command == "restart" ? "tray-restart" : "tray-start");
+                await RefreshStatusAsync(force: true);
+                return;
+            }
+
             ShowNotification(
                 "OpenClaw Tray",
                 "Host is not reachable. Tray lifecycle actions only work when the background host is running.",
@@ -174,6 +185,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             TryLoadConfig();
             var response = await _pipeClient.TrySendAsync("status", CancellationToken.None)
+                ?? _cacheReportReader.ReadStatus(false, _paths, _expectedHostPath, _session.SessionId);
+            await TryRecoverHostAsync(response);
+            response = await _pipeClient.TrySendAsync("status", CancellationToken.None)
                 ?? _cacheReportReader.ReadStatus(false, _paths, _expectedHostPath, _session.SessionId);
             UpdateFromResponse(response);
 
@@ -235,9 +249,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         var hostReachable = response.HostReachable;
         _openDashboardItem.Enabled = hostReachable;
-        _startItem.Enabled = hostReachable && response.State.Current is not nameof(AgentState.Running) and not nameof(AgentState.Starting);
+        _startItem.Enabled = CanStart(response);
         _stopItem.Enabled = hostReachable && response.State.Current is not nameof(AgentState.Stopped) and not nameof(AgentState.Stopping);
-        _restartItem.Enabled = hostReachable && response.State.Current is not nameof(AgentState.Starting) and not nameof(AgentState.Stopping);
+        _restartItem.Enabled = CanRestart(response);
         _refreshItem.Enabled = true;
         _openLogsItem.Enabled = Directory.Exists(_paths.LogsDirectory);
         _openConfigItem.Enabled = File.Exists(_paths.ConfigPath);
@@ -311,6 +325,75 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void OpenDashboard()
     {
         _shellActions.OpenDashboard(_config?.Network.Port ?? AgentConstants.DefaultPort);
+    }
+
+    private static bool CanStart(AgentResponse response)
+    {
+        if (!response.HostReachable)
+        {
+            return response.State.Current is not nameof(AgentState.Stopping);
+        }
+
+        return response.State.Current is not nameof(AgentState.Running) and not nameof(AgentState.Starting);
+    }
+
+    private static bool CanRestart(AgentResponse response)
+    {
+        if (!response.HostReachable)
+        {
+            return response.State.Current is not nameof(AgentState.Stopping);
+        }
+
+        return response.State.Current is not nameof(AgentState.Starting) and not nameof(AgentState.Stopping);
+    }
+
+    private async Task TryRecoverHostAsync(AgentResponse response)
+    {
+        if (!ShouldRecoverHost(response))
+        {
+            return;
+        }
+
+        if (DateTimeOffset.UtcNow - _lastHostRecoveryAttemptAt < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        _lastHostRecoveryAttemptAt = DateTimeOffset.UtcNow;
+        await RecoverHostAsync(response, "tray-autorecover");
+        await Task.Delay(500);
+    }
+
+    private static bool ShouldRecoverHost(AgentResponse response)
+    {
+        if (response.HostReachable)
+        {
+            return false;
+        }
+
+        if (response.State.Desired == nameof(AgentState.Running))
+        {
+            return true;
+        }
+
+        return response.Autostart?.Enabled == true && response.State.Current is not nameof(AgentState.Stopped);
+    }
+
+    private async Task RecoverHostAsync(AgentResponse response, string source)
+    {
+        var hostProcessAlive = response.State.HostProcessId > 0 && ProcessUtilities.ProcessExists(response.State.HostProcessId);
+        if (!hostProcessAlive && response.State.OpenClawProcessId > 0 && ProcessUtilities.ProcessExists(response.State.OpenClawProcessId))
+        {
+            try
+            {
+                await ProcessUtilities.KillProcessTreeAsync(response.State.OpenClawProcessId, CancellationToken.None);
+            }
+            catch
+            {
+            }
+        }
+
+        await HostBootstrapper.StartHostAsync(_hostLaunchInfo, source);
     }
 
     private void ShowStatusWindow()

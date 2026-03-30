@@ -119,8 +119,10 @@ function Copy-DirectoryContents {
     [string]$Destination
   )
 
-  Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+  $null = New-Item -ItemType Directory -Force -Path $Destination
+  & robocopy.exe $Source $Destination /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+  if ($LASTEXITCODE -ge 8) {
+    throw "robocopy failed while copying '$Source' to '$Destination' (exit code $LASTEXITCODE)."
   }
 }
 
@@ -217,7 +219,10 @@ function Stop-ExistingInstallProcesses {
 
   $existingCliPath = Join-Path $CurrentInstallPath 'OpenClaw.Agent.Cli.exe'
   if (Test-Path -LiteralPath $existingCliPath) {
-    [void](Invoke-CliJson -CliPath $existingCliPath -Arguments @('stop', '--json') -ResolvedDataRoot $ResolvedDataRoot)
+    try {
+      [void](Invoke-CliJson -CliPath $existingCliPath -Arguments @('stop', '--json') -ResolvedDataRoot $ResolvedDataRoot)
+    } catch {
+    }
   }
 
   $hostStatePath = Join-Path $ResolvedDataRoot 'state\host-state.json'
