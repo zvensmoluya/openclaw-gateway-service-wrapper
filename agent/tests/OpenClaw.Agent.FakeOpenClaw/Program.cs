@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 
 namespace OpenClaw.Agent.FakeOpenClaw;
 
@@ -31,53 +33,84 @@ internal static class Program
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
 
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        using var listener = new TcpListener(IPAddress.Loopback, port);
         listener.Start();
 
         var serverTask = Task.Run(async () =>
         {
             while (!cts.IsCancellationRequested)
             {
-                HttpListenerContext? context = null;
+                TcpClient? client = null;
                 try
                 {
-                    context = await listener.GetContextAsync().WaitAsync(cts.Token);
+                    client = await listener.AcceptTcpClientAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
                     break;
                 }
-                catch (HttpListenerException)
+                catch (SocketException)
                 {
                     break;
                 }
 
-                if (context is null)
+                if (client is null)
                 {
                     continue;
                 }
 
-                using var response = context.Response;
-                if (string.Equals(context.Request.Url?.AbsolutePath, "/health", StringComparison.OrdinalIgnoreCase))
+                _ = Task.Run(async () =>
                 {
-                    if (healthMode == "failing")
+                    using var tcpClient = client;
+                    await using var networkStream = tcpClient.GetStream();
+                    using var reader = new StreamReader(networkStream, Encoding.ASCII, leaveOpen: true);
+                    await using var writer = new StreamWriter(networkStream, new UTF8Encoding(false), leaveOpen: true)
                     {
-                        response.StatusCode = 500;
-                        await using var writer = new StreamWriter(response.OutputStream);
-                        await writer.WriteAsync("unhealthy");
+                        NewLine = "\r\n",
+                        AutoFlush = true
+                    };
+
+                    string? requestLine;
+                    try
+                    {
+                        requestLine = await reader.ReadLineAsync(cts.Token);
                     }
-                    else
+                    catch
                     {
-                        response.StatusCode = 200;
-                        await using var writer = new StreamWriter(response.OutputStream);
-                        await writer.WriteAsync("ok");
+                        return;
                     }
 
-                    continue;
-                }
+                    if (string.IsNullOrWhiteSpace(requestLine))
+                    {
+                        return;
+                    }
 
-                response.StatusCode = 404;
+                    while (!cts.IsCancellationRequested)
+                    {
+                        var headerLine = await reader.ReadLineAsync(cts.Token);
+                        if (string.IsNullOrEmpty(headerLine))
+                        {
+                            break;
+                        }
+                    }
+
+                    var path = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries).ElementAtOrDefault(1) ?? "/";
+                    if (string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (healthMode == "failing")
+                        {
+                            await WriteHttpResponseAsync(writer, 500, "unhealthy");
+                        }
+                        else
+                        {
+                            await WriteHttpResponseAsync(writer, 200, "ok");
+                        }
+
+                        return;
+                    }
+
+                    await WriteHttpResponseAsync(writer, 404, string.Empty);
+                }, cts.Token);
             }
         }, cts.Token);
 
@@ -99,10 +132,7 @@ internal static class Program
         finally
         {
             cts.Cancel();
-            if (listener.IsListening)
-            {
-                listener.Stop();
-            }
+            listener.Stop();
 
             if (exitTask is not null)
             {
@@ -120,5 +150,28 @@ internal static class Program
     private static int? ParseInt(string? value)
     {
         return int.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static async Task WriteHttpResponseAsync(StreamWriter writer, int statusCode, string body)
+    {
+        var reason = statusCode switch
+        {
+            200 => "OK",
+            404 => "Not Found",
+            500 => "Internal Server Error",
+            _ => "OK"
+        };
+        var content = body ?? string.Empty;
+        var contentLength = Encoding.UTF8.GetByteCount(content);
+
+        await writer.WriteLineAsync($"HTTP/1.1 {statusCode} {reason}");
+        await writer.WriteLineAsync("Content-Type: text/plain; charset=utf-8");
+        await writer.WriteLineAsync($"Content-Length: {contentLength}");
+        await writer.WriteLineAsync("Connection: close");
+        await writer.WriteLineAsync(string.Empty);
+        if (contentLength > 0)
+        {
+            await writer.WriteAsync(content);
+        }
     }
 }
