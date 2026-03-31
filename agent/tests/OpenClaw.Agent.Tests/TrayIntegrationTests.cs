@@ -5,6 +5,7 @@ using OpenClaw.Agent.Protocol;
 
 namespace OpenClaw.Agent.Tests;
 
+[Trait("Category", "DesktopIntegration")]
 public sealed class TrayIntegrationTests
 {
     [Fact]

@@ -69,7 +69,7 @@ jobs:
         run: dotnet build .\agent\OpenClaw.Agent.sln
 
       - name: Test V2 solution
-        run: dotnet test .\agent\tests\OpenClaw.Agent.Tests\OpenClaw.Agent.Tests.csproj
+        run: dotnet test .\agent\tests\OpenClaw.Agent.Tests\OpenClaw.Agent.Tests.csproj --filter "Category!=DesktopIntegration"
 
       - name: Publish V2 layout
         run: powershell -ExecutionPolicy Bypass -File .\build-v2.ps1 -Configuration Release

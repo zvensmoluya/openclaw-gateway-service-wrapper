@@ -1,0 +1,24 @@
+name: Desktop Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  desktop-integration:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run desktop integration tests
+        run: dotnet test .\agent\tests\OpenClaw.Agent.Tests\OpenClaw.Agent.Tests.csproj --filter "Category=DesktopIntegration"
