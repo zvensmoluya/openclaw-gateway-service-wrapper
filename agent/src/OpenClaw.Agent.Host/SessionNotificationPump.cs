@@ -41,10 +41,19 @@ internal sealed class SessionNotificationPump : IDisposable
 
     private void ThreadMain()
     {
-        using var form = new HiddenSessionWindow(_onSessionEnding);
-        _window = form;
-        _ = form.Handle;
-        Application.Run(form);
+        try
+        {
+            using var form = new HiddenSessionWindow(_onSessionEnding);
+            _window = form;
+            _ = form.Handle;
+            Application.Run(form);
+        }
+        catch
+        {
+            // Session notifications are best-effort; the host must keep running even
+            // when a non-interactive environment cannot create the hidden WinForms pump.
+            _window = null;
+        }
     }
 
     private sealed class HiddenSessionWindow : Form
